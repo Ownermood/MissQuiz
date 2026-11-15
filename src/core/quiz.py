@@ -16,12 +16,16 @@ from src.core.database import DatabaseManager
 import unicodedata as _ud
 
 
-def question_key(text) -> str:
+def question_key(text, options=None) -> str:
     """Duplicate-detection key: letters and digits only (any script), after NFKC, lowercased.
-    'ac- quired' == 'acquired', 'ﬁ rst' == 'first', extra spaces/punctuation don't matter."""
+    'ac- quired' == 'acquired', 'ﬁ rst' == 'first', extra spaces/punctuation don't matter.
+    With `options`, two questions are duplicates only if their options match too
+    ('Which of the following statements is INCORRECT?' asked about different topics)."""
     t = _ud.normalize("NFKC", str(text or "")).lower()
-    key = "".join(ch for ch in t if ch.isalnum())
-    return key or t.strip()
+    key = "".join(ch for ch in t if ch.isalnum()) or t.strip()
+    if options:
+        key += "\x1f" + "\x1e".join(sorted(question_key(o) for o in options))
+    return key
 from src.core.exceptions import ValidationError, DatabaseError
 
 logger = logging.getLogger(__name__)
@@ -336,14 +340,14 @@ class QuizManager:
                 # it was built (handles concurrent-import races)
                 existing = set(_existing)
                 for q in self.questions:
-                    existing.add(question_key(q["question"]))
+                    existing.add(question_key(q["question"], q.get("options")))
             else:
-                existing = {question_key(q["question"]) for q in self.questions}
+                existing = {question_key(q["question"], q.get("options")) for q in self.questions}
 
             batch = []
             for q in questions:
                 question = q.get("question", "").strip()
-                q_lower  = question_key(question)
+                q_lower  = question_key(question, q.get("options"))
                 if q_lower in existing:
                     dup_count += 1
                     continue

@@ -117,7 +117,7 @@ def test_bulk_import_end_to_end_saves_into_empty_db():
     db.add_questions_batch.side_effect = lambda b: (len(b), [(i, 100 + i) for i in range(len(b))], [])
     qm = QuizManager(db_manager=db)
     text = "\n\n".join(f"{i}. Question number {i}?\nA) x{i}\nB) y{i}\nAnswer: A" for i in range(1, 6))
-    text += "\n\n6. Question number 1?\nA) x\nB) y\nAnswer: A"            # repeat inside the file
+    text += "\n\n6. Question number 1?\nA) x1\nB) y1\nAnswer: A"          # repeat inside the file
     res = bulk_import(text, qm)
     assert res["imported"] == 5 and res["duplicates"] == 1
     assert len(qm.questions) == 5
@@ -457,7 +457,8 @@ def test_question_key_matches_broken_and_clean_text():
 def test_reimport_with_cleaner_text_is_reported_as_duplicate():
     from types import SimpleNamespace
     from src.bot.quiz_parser import bulk_import
-    qm = SimpleNamespace(questions=[{"question": "Details on how the citizenship may be ac- quired and terminated"}])
+    qm = SimpleNamespace(questions=[{"question": "Details on how the citizenship may be ac- quired and terminated",
+                                     "options": ["A", "B", "C", "D"]}])
     qm.add_questions = lambda batch, _existing=None: {"added": len(batch), "rejected": {"duplicates": 0}, "errors": []}
     t = ("1. Details on how the citizenship may be ac-\nquired and terminated\n(a) A\n(b) B\n(c) C\n(d) D\n"
          "2. A brand new question?\n(a) A\n(b) B\nANSWERS\n1. (a) 2. (b)")
@@ -518,3 +519,24 @@ def test_short_tag_needs_five_questions_and_brand_names_stay():
     few = [_blk(k + 1, f"On Meeting 2026 {q}") for k, q in enumerate(real[:3])]
     items, _ = _up("\n".join(few))
     assert items[0]["question"].startswith("On Meeting 2026")       # 3-word lead in only 3 questions: kept
+
+
+def test_same_text_different_options_are_different_questions():
+    """12MTC bank: 'Which of the following statements is INCORRECT?' about many topics.
+    Duplicate check used only the text, so re-read kept one and dropped the rest."""
+    from src.bot.my_quiz import _mq_key
+    from src.core.quiz import question_key
+    a = {"question": "Which of the following statements is INCORRECT?", "options": ["Shaksgam a", "b", "c", "d"]}
+    b = {"question": "Which of the following statements is INCORRECT?", "options": ["Padma a", "b", "c", "d"]}
+    c = {"question": "which of the following statements is  incorrect", "options": ["d", "c", "b", "Shaksgam a"]}
+    assert _mq_key(a) != _mq_key(b)
+    assert _mq_key(a) == _mq_key(c)                          # same question, options shuffled / spacing
+    assert question_key("Q?") == question_key("q")           # text-only use still works
+    t = "\n".join(f"{k}. Which of the following statements is INCORRECT?\nA) topic{k} a\nB) b\nAnswer: A"
+                  for k in range(1, 4))
+    from types import SimpleNamespace
+    from src.bot.quiz_parser import bulk_import
+    qm = SimpleNamespace(questions=[])
+    qm.add_questions = lambda batch, _existing=None: {"added": len(batch), "rejected": {"duplicates": 0}, "errors": []}
+    res = bulk_import(t, qm)
+    assert res["imported"] == 3 and res["duplicates"] == 0

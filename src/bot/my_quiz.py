@@ -25,6 +25,12 @@ from telegram.ext import ApplicationHandlerStop, ContextTypes
 
 from src.utils.cleaner import clean_text
 from src.bot.ui import UI
+from src.core.quiz import question_key
+
+
+def _mq_key(q: Dict) -> str:
+    """Duplicate key for a quiz question: same text AND same options."""
+    return question_key(q.get("question"), q.get("options"))
 
 logger = logging.getLogger(__name__)
 
@@ -807,7 +813,7 @@ class MyQuizMixin:
         # New, non-duplicate questions in file order
         fresh, local_seen = [], set()
         for q in qs:
-            key = q["question"].lower()
+            key = _mq_key(q)
             if key in d["seen"] or key in local_seen:
                 continue
             local_seen.add(key)
@@ -829,7 +835,7 @@ class MyQuizMixin:
             if len(d["qs"]) >= MAX_Q_PER_SET:
                 note = f"A quiz can have up to {MAX_Q_PER_SET} questions — the rest were skipped."
                 break
-            d["seen"].add(q["question"].lower())
+            d["seen"].add(_mq_key(q))
             d["qs"].append(q)
             added += 1
         if not added and not note:
@@ -878,7 +884,7 @@ class MyQuizMixin:
         for q in pending[:n]:
             if len(d["qs"]) >= MAX_Q_PER_SET:
                 break
-            key = q["question"].lower()
+            key = _mq_key(q)
             if key in d["seen"]:
                 continue
             d["seen"].add(key)
@@ -1070,10 +1076,10 @@ class MyQuizMixin:
             return
         parsed, probs, note, f_entry = await self._mq_read_msg(context, user, msg)
         questions = list(qs.get("questions") or [])
-        seen = {str(q.get("question") or "").lower() for q in questions}
+        seen = {_mq_key(q) for q in questions}
         added = 0
         for q in parsed:
-            key = q["question"].lower()
+            key = _mq_key(q)
             if key in seen or len(questions) >= MAX_Q_PER_SET:
                 continue
             seen.add(key)
@@ -1164,7 +1170,7 @@ class MyQuizMixin:
                 continue
             problems += probs
             for q in got:
-                k = q["question"].lower()
+                k = _mq_key(q)
                 if k not in seen:
                     seen.add(k)
                     out.append(q)

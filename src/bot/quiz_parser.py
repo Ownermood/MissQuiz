@@ -515,7 +515,7 @@ def bulk_import(text: str, quiz_manager, items: Optional[List[Dict]] = None) -> 
         logger.warning(f"Import truncated: {len(raw)} detected, max={MAX_IMPORT_PER_FILE}")
         raw = raw[:MAX_IMPORT_PER_FILE]
     from src.core.quiz import question_key
-    existing = {question_key(q["question"]) for q in quiz_manager.questions}   # already in DB
+    existing = {question_key(q["question"], q.get("options")) for q in quiz_manager.questions}   # already in DB
     seen_in_file: set = set()                                                     # repeats inside this file
     dup_list: List[Dict] = []                                                     # which ones, and why
 
@@ -536,7 +536,7 @@ def bulk_import(text: str, quiz_manager, items: Optional[List[Dict]] = None) -> 
             skipped += 1; problems.append({"where": where, "reason": "empty option"}); continue
         if correct is None or not (0 <= correct < len(options)):
             skipped += 1; problems.append({"where": where, "reason": "answer out of range"}); continue
-        qk = question_key(q_text)
+        qk = question_key(q_text, options)
         if qk in existing or qk in seen_in_file:
             skipped += 1; duplicates += 1
             dup_list.append({"where": where, "reason": "already in the bot" if qk in existing
