@@ -463,3 +463,58 @@ def test_reimport_with_cleaner_text_is_reported_as_duplicate():
          "2. A brand new question?\n(a) A\n(b) B\nANSWERS\n1. (a) 2. (b)")
     res = bulk_import(t, qm)
     assert res["duplicates"] == 1 and res["imported"] == 1
+
+
+# ── topic tags in front of questions (12MTC GK Question Bank PDF) ──
+
+def _blk(n, q, ans="A"):
+    return f"{n}. {q}\nA. one\nB. two\nC. three\nD. four\nAnswer: {ans}"
+
+
+def test_topic_tag_stripped_even_when_not_consecutive():
+    tag = "On IWT) + ■■World’s largest compressed air energy storage facility [CAES] + ■Kaziranga Elevated Corridor"
+    qs = [_blk(1, f"{tag} On which river is the Dulhasti project located?"),
+          _blk(2, "Which body recommended the clearance?"),
+          _blk(3, f"{tag} From which river will Dulhasti draw water?"),
+          _blk(4, f"{tag} Under the Indus Waters Treaty, which country gets the Western Rivers?")]
+    items, probs = _up("\n".join(qs))
+    assert probs == [] and [i["question"] for i in items] == [
+        "On which river is the Dulhasti project located?", "Which body recommended the clearance?",
+        "From which river will Dulhasti draw water?",
+        "Under the Indus Waters Treaty, which country gets the Western Rivers?"]
+
+
+def test_glued_year_and_question_word_split_before_tag_strip():
+    tag = 'On of 628 "Xiaokang" villages along the LAC + Defence Vision 2047'
+    qs = [_blk(1, f"{tag}Which Chinese leader proposed the LAC concept?"),
+          _blk(2, f"{tag}What is the defence export target for FY29?"),
+          _blk(3, f"{tag}Around which year was the Xiaokang project launched?")]
+    items, _ = _up("\n".join(qs))
+    assert [i["question"] for i in items] == ["Which Chinese leader proposed the LAC concept?",
+                                             "What is the defence export target for FY29?",
+                                             "Around which year was the Xiaokang project launched?"]
+
+
+def test_real_shared_question_openings_are_kept():
+    qs = [_blk(1, "From which country’s Constitution the Rule of Law have been borrowed?"),
+          _blk(2, "From which country’s Constitution the Independence of Judiciary have been borrowed?"),
+          _blk(3, "From which country’s Constitution the Federal System have been borrowed?"),
+          _blk(4, "Which of the following is correct about India’s Parliament?"),
+          _blk(5, "Which of the following is correct about India’s President?"),
+          _blk(6, "Which of the following is correct about India’s Judiciary?")]
+    items, _ = _up("\n".join(qs))
+    assert items[0]["question"].startswith("From which country") and items[3]["question"].startswith("Which of the")
+
+
+def test_short_tag_needs_five_questions_and_brand_names_stay():
+    real = ["Between which dates were the Tribal Games held?", "The Games featured how many sports?",
+            "Pertaining to BRICS finance, which body was formed?", "Tracing BRICS history, when was it founded?",
+            "According to the 17th Summit, what was agreed?"]
+    qs = [_blk(k + 1, f"On Meeting 2026 {q}") for k, q in enumerate(real)]
+    qs.append("6. Which startup builds the orbit refuelling ecosystem?\nA. TakeMe2Space\nB. Pixxel\nAnswer: A")
+    items, _ = _up("\n".join(qs))
+    assert [i["question"] for i in items[:5]] == real
+    assert items[5]["options"][0] == "TakeMe2Space"
+    few = [_blk(k + 1, f"On Meeting 2026 {q}") for k, q in enumerate(real[:3])]
+    items, _ = _up("\n".join(few))
+    assert items[0]["question"].startswith("On Meeting 2026")       # 3-word lead in only 3 questions: kept

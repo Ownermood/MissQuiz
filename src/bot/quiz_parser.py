@@ -1132,11 +1132,62 @@ def _u_fix_pdf_breaks(text: str) -> str:
     - 'Chair-\\nman' (word hyphenated at a line end) → 'Chairman'; only when the next line
       starts lowercase, so 'Vice-\\nPresident' keeps its hyphen."""
     text = re.sub(r"([\ufb00-\ufb06])[ \t]+(?=[a-z])", r"\1", text).translate(_LIGATURES)
+    # '… Vision 2047Which Chinese leader…': a question word glued to the line before it
+    text = re.sub(r"(?<=[a-z0-9)\]])(?=(?:What|Which|Who|Whom|Whose|When|Where|Why|How)\b)", " ", text)
+    text = re.sub(r"(?<![A-Za-z\d])(\d{2,})(?=[A-Z][a-z]{2,})", r"\1 ", text)   # '2047Around' (not 'TakeMe2Space')
     text = re.sub(r"(?<=[A-Za-z])-[ \t]*\n[ \t]*(?=[a-z])", "", text)
     return re.sub(r"(?<=[A-Za-z])-[ \t]*\n[ \t]*(?=[A-Z][a-z])", "-", text)     # 'Vice-\nPresident
 
 
+_TAG_NOT_START = {"which", "what", "who", "whom", "whose", "when", "where", "why", "how", "consider",
+                  "identify", "choose", "select", "find", "match", "arrange", "read", "assertion", "statement",
+                  "statements", "in", "the", "according", "with", "under", "as", "if", "given", "for", "a", "an",
+                  "is", "are", "was", "were", "do", "does", "did", "can", "name", "fill", "complete", "pick"}
+
+
+_TAG_QWORDS = {"which", "what", "who", "whom", "whose", "when", "where", "why", "how"}
+
+
+def _u_strip_topic_tags(questions: List[Dict]) -> List[Dict]:
+    """Some files put the same topic tag in front of many questions of a section:
+    'On IWT) + ■■World's largest … Corridor On which river …?'.
+    A lead-in is treated as a tag and dropped when it starts 3+ questions of the file,
+    is 4+ words / 25+ characters, does not open like a real question ('Which of the
+    following…', 'In the context of…'), has no question word in it ('From which country's
+    Constitution the…' stays), and every question keeps a capitalised sentence after it."""
+    if len(questions) < 3:
+        return questions
+    words = [str(q.get("question", "")).split() for q in questions]
+    counts: Dict[Tuple[str, ...], int] = {}
+    for w in words:
+        for k in range(3, min(len(w), 30)):
+            counts[tuple(w[:k])] = counts.get(tuple(w[:k]), 0) + 1
+
+    def is_tag(lead: Tuple[str, ...], seen: int) -> bool:
+        text = " ".join(lead)
+        low = [x.lower().strip("()[]\"'“”‘’,.:;?!") for x in lead]
+        long_enough = (len(lead) >= 4 and len(text) >= 25 and seen >= 3) or \
+                      (len(lead) >= 3 and len(text) >= 12 and seen >= 5)     # 'On Meeting 2026' ×5
+        return (long_enough and low[0] not in _TAG_NOT_START
+                and not _TAG_QWORDS.intersection(low) and not text.endswith((",", ":", "-")))
+
+    for q, w in zip(questions, words):
+        for k in range(min(len(w), 30) - 1, 2, -1):          # longest shared lead-in first
+            lead = tuple(w[:k])
+            if counts.get(lead, 0) >= 3 and is_tag(lead, counts[lead]):
+                rest = " ".join(w[k:])
+                if len(rest) >= 15 and rest[:1].isupper():
+                    q["question"] = rest
+                break
+    return questions
+
+
 def universal_parse(text: str) -> Tuple[List[Dict], List[Dict]]:
+    qs, probs = _universal_parse_raw(text)
+    return _u_strip_topic_tags(qs), probs
+
+
+def _universal_parse_raw(text: str) -> Tuple[List[Dict], List[Dict]]:
     text = (text or "").replace("﻿", "").replace("\r\n", "\n").replace("\r", "\n")
     text = _u_fix_pdf_breaks(text)
     raw_lines: List[str] = []

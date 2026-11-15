@@ -180,6 +180,7 @@ Pakke bugs aur sirf "possible risks" alag-alag likho.
 - `Explanation:` (multi-line), `Category: X | Difficulty: Y`
 - Coaching PDFs: alag line wala watermark (`site.com`) aur page number skip; `Passage (Q.6-Q.10): …` text kisi option mein nahi judta; numbered statements + (a)–(d) = ek question; `(c) x (d) y` row split; chipki heading (`The ABDMWhen…`) hatti; answer key mein `Explanation:` ke baad bhi `N. (b)` answer padhe jaate
 - PDF leftovers (`_u_fix_pdf_breaks`, parse se pehle): `ﬁ rst`/`ofﬁ ce` → first/office, `Chair-⏎man` → Chairman (agli line chhote akshar), `Vice-⏎President` → Vice-President. Duplicate check `quiz.question_key` (NFKC + sirf akshar/ank) — purana `ac- quired` aur naya `acquired` same maane jaate
+- **Topic tag** har question ke aage (`On IWT) + … Corridor On which river…`): `_u_strip_topic_tags` (universal_parse ke end mein) — wahi lead-in file ke 3+ questions mein (4+ shabd/25+ char; ya 3 shabd ho to 5+ questions), sawaal ka shabd (which/what…) nahi, `Which/In the/Consider/From…` jaisa start nahi, baad mein bade akshar ka sawaal. Chipka `2047Which` / `2047Around` pehle alag hota (sirf akela number, `TakeMe2Space` nahi)
 - 2–10 options. Jo samajh na aaye wo skip + report mein "Q12 — answer “E” doesn't match any option" jaisa kaaran
 - Explanation DB mein save hoti hai aur quiz ke 💡 mein dikhti hai; har quiz explanation ke end mein `🆔 Q#id` hamesha
 
