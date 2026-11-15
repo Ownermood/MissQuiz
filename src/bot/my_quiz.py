@@ -1539,6 +1539,9 @@ class MyQuizMixin:
 
         elif action == "mq_rereadok":
             await query.answer("Reading the file… ⏳")
+            # show progress at once and drop the buttons (a big PDF takes 20–40 s; no double taps)
+            await self._bt_edit(query, "⏳ <b>Reading the file again…</b>\n"
+                                       "<i>Big files take up to a minute. This message will update.</i>", None)
             new_qs, problems = await self._mq_reread_files(context, qs)
             if not new_qs:
                 await self._bt_edit(query, "⚠️ <b>Couldn't read questions from the attached file.</b>\n"
