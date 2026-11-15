@@ -429,3 +429,37 @@ def test_wrapped_option_starting_with_initials_is_not_a_new_list():
     items, probs = _up(t)
     assert probs == [] and len(items[0]["options"]) == 4
     assert items[0]["options"][2] == "Union of India vs Rajiv Kumar, A.I.T.U.C. vs Union of India"
+
+
+# ── PDF extraction leftovers (12MTC bank / "Constitutional law MCQ's" PDF) ──
+
+def test_pdf_hyphen_breaks_and_ligatures_are_joined():
+    t = ("710. Details on how the citizenship may be ac-\nquired and terminated are enumer-\nated in\n"
+         "(a) Various enactments\n(b) Schedule I\n(c) The Citizenship Act\n(d) Part II\n"
+         "711. The idea was ﬁ rst given by the ofﬁ  ce of the Vice-\nPresident\n"
+         "(a) Gandhi\n(b) Nehru\n(c) Roy\n(d) None\nANSWERS\n710. (d) 711. (c)")
+    items, probs = _up(t)
+    assert probs == []
+    assert items[0]["question"] == "Details on how the citizenship may be acquired and terminated are enumerated in"
+    assert items[1]["question"] == "The idea was first given by the office of the Vice-President"
+
+
+def test_question_key_matches_broken_and_clean_text():
+    from src.core.quiz import question_key
+    assert question_key("Details on how the citizenship may be ac- quired") == \
+        question_key("Details on how the citizenship may be acquired")
+    assert question_key("was ﬁ rst of all") == question_key("was first of all")
+    assert question_key("Who  is the PM?") == question_key("who is the pm")
+    assert question_key("प्रधानमंत्री कौन है?") != question_key("राष्ट्रपति कौन है?")
+    assert question_key("Delhi") != question_key("Mumbai")
+
+
+def test_reimport_with_cleaner_text_is_reported_as_duplicate():
+    from types import SimpleNamespace
+    from src.bot.quiz_parser import bulk_import
+    qm = SimpleNamespace(questions=[{"question": "Details on how the citizenship may be ac- quired and terminated"}])
+    qm.add_questions = lambda batch, _existing=None: {"added": len(batch), "rejected": {"duplicates": 0}, "errors": []}
+    t = ("1. Details on how the citizenship may be ac-\nquired and terminated\n(a) A\n(b) B\n(c) C\n(d) D\n"
+         "2. A brand new question?\n(a) A\n(b) B\nANSWERS\n1. (a) 2. (b)")
+    res = bulk_import(t, qm)
+    assert res["duplicates"] == 1 and res["imported"] == 1

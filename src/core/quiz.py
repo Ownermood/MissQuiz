@@ -13,6 +13,15 @@ from typing import List, Dict, Optional
 from datetime import datetime, timedelta
 from collections import defaultdict, deque
 from src.core.database import DatabaseManager
+import unicodedata as _ud
+
+
+def question_key(text) -> str:
+    """Duplicate-detection key: letters and digits only (any script), after NFKC, lowercased.
+    'ac- quired' == 'acquired', 'ﬁ rst' == 'first', extra spaces/punctuation don't matter."""
+    t = _ud.normalize("NFKC", str(text or "")).lower()
+    key = "".join(ch for ch in t if ch.isalnum())
+    return key or t.strip()
 from src.core.exceptions import ValidationError, DatabaseError
 
 logger = logging.getLogger(__name__)
@@ -327,14 +336,14 @@ class QuizManager:
                 # it was built (handles concurrent-import races)
                 existing = set(_existing)
                 for q in self.questions:
-                    existing.add(q["question"].strip().lower())
+                    existing.add(question_key(q["question"]))
             else:
-                existing = {q["question"].strip().lower() for q in self.questions}
+                existing = {question_key(q["question"]) for q in self.questions}
 
             batch = []
             for q in questions:
                 question = q.get("question", "").strip()
-                q_lower  = question.lower()
+                q_lower  = question_key(question)
                 if q_lower in existing:
                     dup_count += 1
                     continue

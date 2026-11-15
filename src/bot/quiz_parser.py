@@ -514,7 +514,8 @@ def bulk_import(text: str, quiz_manager, items: Optional[List[Dict]] = None) -> 
     if len(raw) > MAX_IMPORT_PER_FILE:
         logger.warning(f"Import truncated: {len(raw)} detected, max={MAX_IMPORT_PER_FILE}")
         raw = raw[:MAX_IMPORT_PER_FILE]
-    existing = {q["question"].strip().lower() for q in quiz_manager.questions}   # already in DB
+    from src.core.quiz import question_key
+    existing = {question_key(q["question"]) for q in quiz_manager.questions}   # already in DB
     seen_in_file: set = set()                                                     # repeats inside this file
     dup_list: List[Dict] = []                                                     # which ones, and why
 
@@ -535,9 +536,10 @@ def bulk_import(text: str, quiz_manager, items: Optional[List[Dict]] = None) -> 
             skipped += 1; problems.append({"where": where, "reason": "empty option"}); continue
         if correct is None or not (0 <= correct < len(options)):
             skipped += 1; problems.append({"where": where, "reason": "answer out of range"}); continue
-        if q_text.lower() in existing or q_text.lower() in seen_in_file:
+        qk = question_key(q_text)
+        if qk in existing or qk in seen_in_file:
             skipped += 1; duplicates += 1
-            dup_list.append({"where": where, "reason": "already in the bot" if q_text.lower() in existing
+            dup_list.append({"where": where, "reason": "already in the bot" if qk in existing
                              else "repeated in this file"})
             continue
         if item.get("explanation"):
@@ -554,7 +556,7 @@ def bulk_import(text: str, quiz_manager, items: Optional[List[Dict]] = None) -> 
         item["options"]  = clamped
         if not item.get("category") or item["category"] == "General Knowledge":
             item["category"] = guess_category(q_text)   # keep a category given in the file
-        seen_in_file.add(q_text.lower())   # NOT into `existing`: that set means "already in DB"
+        seen_in_file.add(qk)   # NOT into `existing`: that set means "already in DB"
         batch.append(item)
 
     if batch:
@@ -1120,8 +1122,23 @@ def _u_find_q_start(lines: List[str], start_idx: int, end_idx: int) -> Optional[
     return None
 
 
+_LIGATURES = str.maketrans({"\ufb00": "ff", "\ufb01": "fi", "\ufb02": "fl", "\ufb03": "ffi",
+                            "\ufb04": "ffl", "\ufb05": "ft", "\ufb06": "st"})
+
+
+def _u_fix_pdf_breaks(text: str) -> str:
+    """PDF text-extraction leftovers:
+    - 'ﬁ rst' / 'ofﬁ  ce' (ligature glyph + stray space) → 'first' / 'office'
+    - 'Chair-\\nman' (word hyphenated at a line end) → 'Chairman'; only when the next line
+      starts lowercase, so 'Vice-\\nPresident' keeps its hyphen."""
+    text = re.sub(r"([\ufb00-\ufb06])[ \t]+(?=[a-z])", r"\1", text).translate(_LIGATURES)
+    text = re.sub(r"(?<=[A-Za-z])-[ \t]*\n[ \t]*(?=[a-z])", "", text)
+    return re.sub(r"(?<=[A-Za-z])-[ \t]*\n[ \t]*(?=[A-Z][a-z])", "-", text)     # 'Vice-\nPresident
+
+
 def universal_parse(text: str) -> Tuple[List[Dict], List[Dict]]:
     text = (text or "").replace("﻿", "").replace("\r\n", "\n").replace("\r", "\n")
+    text = _u_fix_pdf_breaks(text)
     raw_lines: List[str] = []
     for ln in text.split("\n"):
         c = _u_clean_line(ln)

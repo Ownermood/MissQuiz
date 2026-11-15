@@ -179,6 +179,7 @@ Pakke bugs aur sirf "possible risks" alag-alag likho.
 - File ke end mein answer key: `Answer Key:` ke neeche `1. A` / `1-a` / `1A 2B`
 - `Explanation:` (multi-line), `Category: X | Difficulty: Y`
 - Coaching PDFs: alag line wala watermark (`site.com`) aur page number skip; `Passage (Q.6-Q.10): …` text kisi option mein nahi judta; numbered statements + (a)–(d) = ek question; `(c) x (d) y` row split; chipki heading (`The ABDMWhen…`) hatti; answer key mein `Explanation:` ke baad bhi `N. (b)` answer padhe jaate
+- PDF leftovers (`_u_fix_pdf_breaks`, parse se pehle): `ﬁ rst`/`ofﬁ ce` → first/office, `Chair-⏎man` → Chairman (agli line chhote akshar), `Vice-⏎President` → Vice-President. Duplicate check `quiz.question_key` (NFKC + sirf akshar/ank) — purana `ac- quired` aur naya `acquired` same maane jaate
 - 2–10 options. Jo samajh na aaye wo skip + report mein "Q12 — answer “E” doesn't match any option" jaisa kaaran
 - Explanation DB mein save hoti hai aur quiz ke 💡 mein dikhti hai; har quiz explanation ke end mein `🆔 Q#id` hamesha
 
