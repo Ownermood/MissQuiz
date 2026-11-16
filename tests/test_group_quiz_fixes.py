@@ -270,3 +270,44 @@ async def test_battle_long_option_sends_card_then_poll():
     rounds = await app._bt_send_question(b, c, q, 1)
     assert rounds and any("<b>A)</b>" in t for t in sent)
     assert all(len(x) <= 100 for x in polls[0][1]["options"])
+
+
+async def test_leaderboard_every_n_old_one_deleted_and_lobby_toggle(monkeypatch):
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr(gq, "LB_EVERY", 5)
+    app = App()
+    c, polls, sent = ctx(admins=(1,))
+    c.bot.delete_message = AsyncMock()
+    await press(app, c, user(1), "gq|bot|1|20")
+    s = gq.ACTIVE[GROUP]
+    assert s.show_board is True                                    # default ON
+    s.secs = 0.01
+    await answer_all(app, polls, {7: 0}, 20)
+    await wait_done()
+    boards = [t for t in sent if "After" in t and "questions" in t]
+    assert len(boards) == 3                                         # after 5, 10, 15 (not 20 = final)
+    # every board deleted when the next came, the last one when the result came
+    assert c.bot.delete_message.await_count == 3
+
+
+async def test_leaderboard_off_in_lobby(monkeypatch):
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr(gq, "LB_EVERY", 5)
+    monkeypatch.setattr(gq, "USE_LOBBY", True)
+    monkeypatch.setattr(gq, "LOBBY_TIMEOUT", 0)
+    app = App()
+    c, polls, sent = ctx(admins=(1,))
+    c.bot.pin_chat_message = AsyncMock()
+    await press(app, c, user(1), "gq|bot|1|10")
+    q = await press(app, c, user(1), f"gq|lset|{GROUP}")
+    kb = q.message.edit_text.await_args.kwargs["reply_markup"]
+    assert any("Leaderboard every 5 Q" in b.text and b.text.startswith("✅")
+               for r in kb.inline_keyboard for b in r)
+    await press(app, c, user(1), f"gq|tog_lb|{GROUP}")
+    s = gq.ACTIVE[GROUP]
+    assert s.show_board is False and Session.from_doc(s.to_doc()).show_board is False
+    await press(app, c, user(1), f"gq|launch|{GROUP}")
+    s.secs = 0.01
+    await answer_all(app, polls, {7: 0}, 10)
+    await wait_done()
+    assert not any("After" in t and "questions" in t for t in sent)

@@ -131,7 +131,8 @@ async def test_non_admin_cannot_start_and_dm_points_to_group():
     assert "Start in Group" in app.replies[-1][0]
 
 
-async def test_full_bot_quiz_with_leaderboard_scoring_and_auto_quiz_pause():
+async def test_full_bot_quiz_with_leaderboard_scoring_and_auto_quiz_pause(monkeypatch):
+    monkeypatch.setattr(gq, "LB_EVERY", 10)
     app = App()
     c, polls, sent = ctx()
     admin = user(1, "Admin")

@@ -48,7 +48,7 @@ def _spawn(coro):
 
 START_DELAY = 3          # countdown before Q1
 GAP         = 2          # pause after each question
-LB_EVERY    = 10         # mini leaderboard every N questions
+LB_EVERY    = 50         # mini leaderboard every N questions (the previous one is deleted)
 BOT_COUNTS  = (10, 20, 30)
 BOT_SECS    = 20
 IDLE_PAUSE  = 30 * 60    # a paused session is closed after 30 min
@@ -89,6 +89,8 @@ class Session:
     mention_players: bool = True
     certificates:    bool = True
     auto_pause:      bool = False
+    show_board:      bool = True            # leaderboard every LB_EVERY questions (lobby setting)
+    board_msg_id:    Optional[int] = None   # last leaderboard message (deleted when the next comes)
     unanswered_streak: int = 0
     part_start: int = -1                    # first question index of this part (-1 = not a part)
     pinned:    bool = False                 # lobby/control message pinned by the bot
@@ -104,7 +106,8 @@ class Session:
             "negative_rate": self.negative_rate, "marks_per_q": self.marks_per_q,
             "user_history": self.user_history, "ready_players": self.ready_players,
             "mention_players": self.mention_players, "certificates": self.certificates,
-            "auto_pause": self.auto_pause, "part_start": self.part_start, "pinned": self.pinned,
+            "auto_pause": self.auto_pause,
+            "show_board": self.show_board, "board_msg_id": self.board_msg_id, "part_start": self.part_start, "pinned": self.pinned,
         }
 
     @classmethod
@@ -123,6 +126,8 @@ class Session:
             mention_players=bool(d.get("mention_players", True)),
             certificates=bool(d.get("certificates", True)),
             auto_pause=bool(d.get("auto_pause", False)),
+            show_board=bool(d.get("show_board", True)),
+            board_msg_id=d.get("board_msg_id"),
             part_start=int(d["part_start"]) if d.get("part_start") is not None else -1,
             pinned=bool(d.get("pinned")),
         )
@@ -221,6 +226,8 @@ def _lobby_kb(s: Session) -> InlineKeyboardMarkup:
              InlineKeyboardButton(f"{on(s.certificates)} Certificates", callback_data=f"gq|tog_cert|{c}")],
             [InlineKeyboardButton(f"{on(s.mention_players)} Mention players", callback_data=f"gq|tog_men|{c}"),
              InlineKeyboardButton(f"{on(s.auto_pause)} Auto pause", callback_data=f"gq|tog_ap|{c}")],
+            [InlineKeyboardButton(f"{on(s.show_board)} Leaderboard every {LB_EVERY} Q",
+                                  callback_data=f"gq|tog_lb|{c}")],
             [InlineKeyboardButton("⬅️ Back", callback_data=f"gq|lback|{c}", style="danger")],
         ])
     n_ready = len(s.ready_players)
@@ -640,9 +647,11 @@ class GroupQuizMixin:
                         continue
                 else:
                     s.unanswered_streak = 0
-                if num % LB_EVERY == 0 and num < n:
-                    await self._gq_send(context, s, f"📊 <b>After {num} questions</b>\n{self._gq_board(s, 5)}",
-                                        _kb(s))
+                if s.show_board and num % LB_EVERY == 0 and num < n:
+                    await self._gq_drop_board(context, s)              # only the latest one stays
+                    sent = await self._gq_send(context, s, f"📊 <b>After {num} questions</b>\n{self._gq_board(s, 5)}",
+                                               _kb(s))
+                    s.board_msg_id = getattr(sent, "message_id", None)
                 await asyncio.sleep(GAP)
             await self._gq_finish(context, s)
         except Exception as e:
@@ -825,9 +834,19 @@ class GroupQuizMixin:
         return await send_rich(context.bot, s.chat_id, rich_html, reply_markup=kb,
                                thread_id=s.thread_id, tag="GQUIZ")
 
+    async def _gq_drop_board(self, context, s: Session) -> None:
+        """Delete the previous mid-quiz leaderboard (a new one or the final result replaces it)."""
+        mid, s.board_msg_id = s.board_msg_id, None
+        if mid:
+            try:
+                await context.bot.delete_message(s.chat_id, mid)
+            except Exception as e:
+                logger.debug(f"[GQUIZ] {s.chat_id} old leaderboard not deleted: {e}")
+
     async def _gq_finish(self, context, s: Session) -> None:
         if ACTIVE.get(s.chat_id) is s:
             ACTIVE.pop(s.chat_id, None)
+        await self._gq_drop_board(context, s)
         await self._gq_unpin(context, s)
         asked = min(s.idx, len(s.questions))
         if s.set_id and s.part_start >= 0 and asked:      # big quiz: next time continue after this part
@@ -1397,6 +1416,14 @@ class GroupQuizMixin:
             if action == "tog_neg":
                 s.negative_rate = 0.0 if s.negative_rate > 0 else 0.25
                 await query.answer(f"Negative Marking: {'-' + str(s.negative_rate) if s.negative_rate > 0 else 'OFF'}")
+                try:
+                    await query.message.edit_text(_lobby_text(s), parse_mode=ParseMode.HTML, reply_markup=_lobby_kb(s))
+                except Exception:
+                    pass
+                return
+            if action == "tog_lb":
+                s.show_board = not s.show_board
+                await query.answer(f"Leaderboard every {LB_EVERY} Q: {'ON 📊' if s.show_board else 'OFF'}")
                 try:
                     await query.message.edit_text(_lobby_text(s), parse_mode=ParseMode.HTML, reply_markup=_lobby_kb(s))
                 except Exception:
