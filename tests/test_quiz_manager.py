@@ -179,7 +179,7 @@ class TestDeleteQuestion:
 
 class TestStartup:
 
-    def test_init_fetches_questions_once_and_still_migrates(self):
+    def test_init_fetches_questions_once_and_keeps_long_options(self):
         long_opt = "x" * 150
         db = MagicMock()
         db.get_all_questions.return_value = [
@@ -189,7 +189,6 @@ class TestStartup:
         mgr = QuizManager(db_manager=db)
         assert db.get_all_questions.call_count == 1
         assert len(mgr.questions) == 2
-        # only the over-long question is rewritten, with an option within the 100-char limit
-        assert db.update_question.call_count == 1
-        args = db.update_question.call_args
-        assert args.args[0] == 1 and len(args.args[2][1]) <= 100
+        # long options are no longer cut in the DB (text was lost for good); fit_poll cuts at send time
+        db.update_question.assert_not_called()
+        assert mgr.questions[0]["options"][1] == long_opt

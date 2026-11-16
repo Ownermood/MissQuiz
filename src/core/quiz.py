@@ -35,11 +35,10 @@ TELEGRAM_OPTION_MAX = 100  # Telegram hard limit for poll option text length
 
 
 def _sanitize_option(opt: str) -> str:
-    """Truncate a poll option to Telegram's 100-char limit, marking the cut with an ellipsis."""
-    opt = str(opt).strip()
-    if len(opt) > TELEGRAM_OPTION_MAX:
-        return opt[:97] + "…"
-    return opt
+    """Clean an option. Long options are NOT cut any more: the full text stays in the DB and in
+    memory; every poll sender fits it at send time (ui.fit_poll: full text card + 'A) …' option).
+    Cutting here destroyed the text in the DB for good."""
+    return str(opt).strip()
 
 
 def _fmt_question(q: Dict) -> Dict:
@@ -104,6 +103,7 @@ class QuizManager:
         """
         if not self.db:
             return
+        return    # disabled: it cut long options IN THE DATABASE on every start (text lost for good)
         try:
             if all_q is None:
                 all_q = self.db.get_all_questions()
