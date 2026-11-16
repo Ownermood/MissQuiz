@@ -466,7 +466,9 @@ class TelegramQuizBot(
             self.handle_admin_panel_callback, pattern=r"^ap:"))
         app.add_handler(CallbackQueryHandler(
             self._cb_start_battle, pattern=r"^start_battle$"))
-        app.add_handler(CallbackQueryHandler(self.handle_callback))
+        # catch-all: must not swallow edit_quiz_* (registered further down with the dev module;
+        # only the first matching handler of a group runs)
+        app.add_handler(CallbackQueryHandler(self.handle_callback, pattern=r"^(?!edit_quiz_)"))
 
         # Bulk import: .txt file
         app.add_handler(MessageHandler(
