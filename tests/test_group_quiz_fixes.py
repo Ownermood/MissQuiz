@@ -246,3 +246,27 @@ async def test_schedule_uses_ist_saves_and_rearms_after_restart(monkeypatch):
     c.args = ["in", "5m"]
     await app.cmd_schedule(group_upd(user(2)), c)                     # member can't
     assert "Only group admins" in app.replies[-1][0]
+
+
+def test_fit_poll_rules():
+    from src.bot.ui import fit_poll
+    card, q, o = fit_poll("[1/2] ", "Short?", ["a", "b"])
+    assert card is None and q == "[1/2] Short?" and o == ["a", "b"]
+    card, q, o = fit_poll("[1/2] ", "W " * 200, ["a", "b"])
+    assert card and q.endswith("Read the question above ⬆️") and o == ["a", "b"] and len(q) <= 300
+    card, q, o = fit_poll("[1/2] ", "Q?", ["x " * 80, "b"])
+    assert "<b>A)</b>" in card and all(len(x) <= 100 for x in o) and o[1] == "B) b"
+
+
+async def test_battle_long_option_sends_card_then_poll():
+    from src.bot.battle import Battle
+    app = App()
+    c, polls, sent = ctx()
+    b = Battle.__new__(Battle)
+    b.__dict__.update(id="b1", mode="group", chat_id=GROUP, thread_id=None, n_q=1, secs=10,
+                      players=[1, 2], rounds={})
+    app._battle_polls = {}
+    q = {"question": "Which?", "options": ["long " * 30, "short"], "correct_answer": 1}
+    rounds = await app._bt_send_question(b, c, q, 1)
+    assert rounds and any("<b>A)</b>" in t for t in sent)
+    assert all(len(x) <= 100 for x in polls[0][1]["options"])

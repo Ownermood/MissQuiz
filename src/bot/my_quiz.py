@@ -24,7 +24,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
 from src.utils.cleaner import clean_text
-from src.bot.ui import UI
+from src.bot.ui import UI, fit_poll, short_text
 from src.core.quiz import question_key
 
 
@@ -1856,27 +1856,18 @@ class MyQuizMixin:
                 s.idx = i + 1
                 s.wake.clear()
 
-                opts = [str(o)[:100] for o in q.get("options") or []][:10]
-                if len(opts) < 2:
+                if len(q.get("options") or []) < 2:
                     continue
+                cat = q.get("category") or ""
+                cat_e = UI.cat_emoji(cat) if cat else "💡"
+                card, poll_q, opts = fit_poll(f"[{i+1}/{total}] {cat_e} ", q.get("question"), q.get("options"),
+                                              f"Question {i+1}/{total} {cat_e}")
                 correct = int(q.get("correct_answer", 0))
                 if not 0 <= correct < len(opts):
                     correct = 0
                 s.current_correct = correct
-
-                q_text = str(q.get("question") or "").strip()
-                cat = q.get("category") or ""
-                cat_e = UI.cat_emoji(cat) if cat else "💡"
-                head = f"[{i+1}/{total}] {cat_e} "
-                if len(head) + len(q_text) > 295:
-                    await context.bot.send_message(
-                        chat_id=user_id,
-                        text=f"❓ <b>Question {i+1}/{total} {cat_e}</b>\n\n{html.escape(q_text)}",
-                        parse_mode=ParseMode.HTML,
-                    )
-                    poll_q = f"[{i+1}/{total}] {cat_e} Read question above ⬆️"
-                else:
-                    poll_q = head + q_text
+                if card:
+                    await context.bot.send_message(chat_id=user_id, text=card, parse_mode=ParseMode.HTML)
 
                 exp = str(q.get("explanation") or "").strip()
                 kw = dict(
@@ -1889,7 +1880,7 @@ class MyQuizMixin:
                     open_period=s.secs,
                 )
                 if exp:
-                    kw["explanation"] = exp[:200]
+                    kw["explanation"] = short_text(exp, 200)
 
                 try:
                     poll_msg = await context.bot.send_poll(**kw)

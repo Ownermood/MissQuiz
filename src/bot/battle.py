@@ -31,7 +31,7 @@ from telegram import (
 from telegram.constants import ParseMode
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
-from src.bot.ui import UI, get_thread_id
+from src.bot.ui import UI, fit_poll, get_thread_id
 
 logger = logging.getLogger(__name__)
 
@@ -906,12 +906,12 @@ class BattleMixin:
             await self._bt_notify(b, context, "⚠️ Battle stopped due to an error.")
 
     async def _bt_send_question(self, b: Battle, context, q: Dict, n: int) -> List[_Round]:
-        options = [str(o)[:100] for o in q["options"]][:10]
+        card, poll_q, options = fit_poll(f"⚔️ {n}/{b.n_q}  ", q.get("question"), q["options"], f"Q{n}/{b.n_q}")
         correct = int(q.get("correct_answer", 0))
         if not 0 <= correct < len(options):
             correct = 0
         kwargs = dict(
-            question=f"⚔️ {n}/{b.n_q}  {q['question']}"[:300],
+            question=poll_q,
             options=options, type=Poll.QUIZ, correct_option_id=correct,
             is_anonymous=False, open_period=b.secs,
         )
@@ -921,6 +921,12 @@ class BattleMixin:
             kw = dict(kwargs, chat_id=chat_id)
             if thread_id:
                 kw["message_thread_id"] = thread_id
+            if card:                                     # long question/option: full text first
+                try:
+                    await context.bot.send_message(chat_id, card, parse_mode="HTML",
+                                                   **({"message_thread_id": thread_id} if thread_id else {}))
+                except Exception as e:
+                    logger.debug(f"[BATTLE] {b.id} card to {chat_id} failed: {e}")
             try:
                 msg = await context.bot.send_poll(**kw)
             except Exception as e:

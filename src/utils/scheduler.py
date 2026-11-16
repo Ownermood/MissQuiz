@@ -471,7 +471,8 @@ class AutoQuizScheduler:
                             f"[SCHEDULER] Q#{q_id} option truncated at delivery "
                             f"({len(_s)} chars) for chat {chat_id}"
                         )
-                        _s = _s[:97] + "…"
+                        from src.bot.ui import short_text
+                        _s = short_text(_s, 100)
                     _clamped.append(_s)
                 options = _clamped
 
@@ -481,9 +482,10 @@ class AutoQuizScheduler:
                         else f"✅ {options[correct_idx]}\n📚 {category}  ·")
                 explanation = head[:200 - len(tail)] + tail
 
+                from src.bot.ui import short_text
                 send_kwargs = dict(
                     chat_id           = chat_id,
-                    question          = question.get("question", "Quiz Question"),
+                    question          = short_text(question.get("question") or "Quiz Question", 300),
                     options           = options,
                     type              = Poll.QUIZ,
                     correct_option_id = correct_idx,

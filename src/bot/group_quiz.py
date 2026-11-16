@@ -28,7 +28,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Poll, Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
-from src.bot.ui import UI, get_thread_id
+from src.bot.ui import UI, fit_poll, get_thread_id, short_text
 
 logger = logging.getLogger(__name__)
 
@@ -232,15 +232,7 @@ def _lobby_kb(s: Session) -> InlineKeyboardMarkup:
     ])
 
 
-def _short(text: str, limit: int) -> str:
-    """Cut at a word boundary with … (poll options are max 100 chars)."""
-    text = " ".join(str(text).split())
-    if len(text) <= limit:
-        return text
-    cut = text[:limit - 1]
-    if " " in cut[limit // 2:]:
-        cut = cut[:cut.rfind(" ")]
-    return cut.rstrip(" ,;:-") + "…"
+_short = short_text
 
 
 def _medal(i: int) -> str:
@@ -658,28 +650,17 @@ class GroupQuizMixin:
             await self._gq_finish(context, s)
 
     async def _gq_ask(self, context, s: Session, q: Dict, num: int, n: int) -> bool:
-        full = [" ".join(str(o).split()) for o in q.get("options") or []][:10]
-        correct = int(q.get("correct_answer", 0))
-        if len(full) < 2:
+        if len(q.get("options") or []) < 2:
             return True                                    # broken question: just skip it
-        if not 0 <= correct < len(full):
-            correct = 0
+        correct = int(q.get("correct_answer", 0))
         cat_e = UI.cat_emoji(q.get("category", "")) if q.get("category") else "💡"
         head = f"[{num}/{n}] {cat_e} "
-        qtext = str(q.get("question") or "").strip()
-        long_q = len(head) + len(qtext) > 300              # Telegram poll: question ≤ 300 chars
-        long_o = any(len(o) > 100 for o in full)           # … and each option ≤ 100 chars
-        opts = full
-        if long_q or long_o:                               # full text first, so nothing is lost
-            card = f"❓ <b>Q{num}/{n} {cat_e}</b>\n{html.escape(qtext[:3000])}"
-            if long_o:
-                card += "\n\n" + "\n".join(f"<b>{chr(65 + k)})</b> {html.escape(o[:400])}"
-                                            for k, o in enumerate(full))
-                opts = [_short(f"{chr(65 + k)}) {o}", 100) for k, o in enumerate(full)]
+        card, poll_q, opts = fit_poll(head, q.get("question"), q.get("options"), f"Q{num}/{n} {cat_e}")
+        if not 0 <= correct < len(opts):
+            correct = 0
+        if card:                                           # full text first, so nothing is lost
             await self._gq_send(context, s, card)
-            if long_q:
-                qtext = "Read the question above ⬆️"
-        kw = dict(chat_id=s.chat_id, question=head + qtext, options=opts, type=Poll.QUIZ,
+        kw = dict(chat_id=s.chat_id, question=poll_q, options=opts, type=Poll.QUIZ,
                   correct_option_id=correct, is_anonymous=False, open_period=s.secs)
         exp = str(q.get("explanation") or "").strip()
         if exp:

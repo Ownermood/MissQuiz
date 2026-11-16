@@ -13,7 +13,7 @@ from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 
-from src.bot.ui import UI, get_thread_id, get_tracking_id
+from src.bot.ui import UI, fit_poll, get_thread_id, get_tracking_id
 
 logger = logging.getLogger(__name__)
 
@@ -84,9 +84,13 @@ class QuizCommandsMixin(object):
             except Exception as e:
                 logger.warning(f"cmd_quiz: prev-quiz lookup failed: {e}")
 
+        card, poll_q, poll_opts = fit_poll(f"{cat_emoji} ", question.get("question"), options,
+                                           f"{cat_emoji} Question")
+        if card:                                          # long text: full question/options first
+            await self._reply(update, card)
         poll_kwargs = dict(
-            question          = f"{cat_emoji} {question['question']}",
-            options           = options,
+            question          = poll_q,
+            options           = poll_opts,
             type              = Poll.QUIZ,
             correct_option_id = correct_idx,
             is_anonymous      = False,

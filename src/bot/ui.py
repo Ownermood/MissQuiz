@@ -235,3 +235,39 @@ def make_admin_keyboard(bot_username: str):
         return None
     url = f"https://t.me/{bot_username}?startgroup&admin=delete_messages+pin_messages"
     return InlineKeyboardMarkup([[btn("Make me admin", "plus", "success", url=url)]])
+
+
+# ── Telegram poll limits: question ≤ 300, option ≤ 100 characters ─────────────
+POLL_Q_MAX, POLL_OPT_MAX = 300, 100
+
+
+def short_text(text, limit: int) -> str:
+    """Cut at a word boundary with … (never in the middle of a word when avoidable)."""
+    text = " ".join(str(text or "").split())
+    if len(text) <= limit:
+        return text
+    cut = text[:limit - 1]
+    if " " in cut[limit // 2:]:
+        cut = cut[:cut.rfind(" ")]
+    return cut.rstrip(" ,;:-") + "…"
+
+
+def fit_poll(head: str, question: str, options, label: str = ""):
+    """Make a question fit a Telegram poll without losing text.
+    Returns (card, poll_question, poll_options):
+      card = None when everything fits; else an HTML message with the FULL question
+      (and, if an option is too long, all options as A) B) …) to send right before the poll.
+    Long option → poll options become 'A) …' so players match them with the card."""
+    full = [" ".join(str(o).split()) for o in (options or [])][:10]
+    q = str(question or "").strip()
+    long_q = len(head) + len(q) > POLL_Q_MAX
+    long_o = any(len(o) > POLL_OPT_MAX for o in full)
+    if not long_q and not long_o:
+        return None, head + q, full
+    card = f"❓ <b>{html.escape(label or head.strip())}</b>\n{html.escape(q[:3000])}"
+    opts = full
+    if long_o:
+        card += "\n\n" + "\n".join(f"<b>{chr(65 + k)})</b> {html.escape(o[:400])}" for k, o in enumerate(full))
+        opts = [short_text(f"{chr(65 + k)}) {o}", POLL_OPT_MAX) for k, o in enumerate(full)]
+    poll_q = head + ("Read the question above ⬆️" if long_q else q)
+    return card, short_text(poll_q, POLL_Q_MAX), opts
