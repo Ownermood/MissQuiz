@@ -171,6 +171,8 @@ def run_polling_mode(config: Config):
                 allowed_updates=["message", "poll_answer", "callback_query", "my_chat_member", "inline_query"],
             )
             bot.run_startup_tasks()
+            from src.utils import watchdog
+            watchdog.start()             # frozen 2 min → stack trace in the log + auto restart
             # Recover groups from history NOW — bot is connected, get_chat() works.
             # Scans activities + auto_quiz_state for group IDs not yet in groups_col,
             # calls getChat() for each, and registers them immediately.
