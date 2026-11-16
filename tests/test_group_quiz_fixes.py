@@ -88,3 +88,27 @@ async def test_next_part_after_middle_part_points_after_it():
     await wait_done()
     kb = c.bot.send_message.await_args.kwargs["reply_markup"]
     assert kb.inline_keyboard[0][0].text == "▶️ Next part · from Q51"
+
+
+async def test_plain_start_in_group_admin_gets_picker_member_does_not():
+    """'Host in Group' when the bot is already in the group: Telegram sends just /start."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+    from src.bot.handlers_main import TelegramQuizBot
+    from tests.test_group_quiz import group_upd
+    b = TelegramQuizBot(MagicMock(), db_manager=MagicMock())
+    b.application = MagicMock()
+    b.cmd_startquiz = AsyncMock()
+    c, _, _ = ctx(admins=(1,))
+    upd = group_upd(user(1))
+    upd.message = SimpleNamespace(text="/start@MissQuiz_Bot", sender_chat=None)
+    await b.cmd_start(upd, c)
+    b.cmd_startquiz.assert_awaited_once()
+    b.cmd_startquiz.reset_mock()
+    upd2 = group_upd(user(2))                                    # normal member → normal /start
+    upd2.message = SimpleNamespace(text="/start", sender_chat=None)
+    try:
+        await b.cmd_start(upd2, c)
+    except Exception:
+        pass                                                     # welcome card needs more mocks
+    b.cmd_startquiz.assert_not_awaited()

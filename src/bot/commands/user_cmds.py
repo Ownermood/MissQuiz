@@ -33,6 +33,15 @@ class UserCommandsMixin(object):
             await self.cmd_startquiz(update, context)
             return
 
+        # Plain /start typed in a group by an admin → quiz picker. "Host in Group" lands here too:
+        # when the bot is already in the group Telegram drops the "host" parameter.
+        if (not is_pm and edit_msg is None and not context.args and hasattr(self, "cmd_startquiz")
+                and update.message and (update.message.text or "").startswith("/start")):
+            from src.bot.group_quiz import is_active
+            if not is_active(chat.id) and await self._gq_is_admin(context, chat.id, user, update.message):
+                await self.cmd_startquiz(update, context)
+                return
+
         # Deep link in a group: /start gq_<quiz id> (quiz card → Start in Group)
         if not is_pm and context.args and context.args[0].startswith("gq_") and hasattr(self, "gq_start_from_link"):
             await self.gq_start_from_link(update, context, context.args[0][3:])
