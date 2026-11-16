@@ -208,7 +208,8 @@ def _lobby_text(s: Session, extra_note: str = "") -> str:
             f"<blockquote>❓ Questions › {len(s.questions)}\n⏱ Timer › {s.secs}s each\n"
             f"⚖️ Negative › {neg}\n👑 Host › {UI.mention(s.started_by, s.starter_name or 'Host')}</blockquote>\n"
             f"🙋 <b>Ready ({n_ready})</b>\n{ready}\n{note}"
-            f"<i>Tap “I'm Ready” to play. The host starts the quiz.</i>")
+            f"<i>Tap “I'm Ready” to play. The host starts the quiz"
+            + (f" (auto-start in {LOBBY_TIMEOUT // 60} min)" if LOBBY_TIMEOUT >= 60 else "") + ".</i>")
 
 
 def _lobby_kb(s: Session) -> InlineKeyboardMarkup:
