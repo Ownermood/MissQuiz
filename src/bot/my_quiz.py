@@ -8,6 +8,8 @@ export, or download the original Study Material file.
 """
 
 import asyncio
+
+from src.utils.heavy import run_heavy
 import datetime
 import html
 import io
@@ -921,7 +923,7 @@ class MyQuizMixin:
                     from src.bot.file_extract import extract
                     f = await context.bot.get_file(doc.file_id, read_timeout=60)
                     data = bytes(await f.download_as_bytearray(read_timeout=60))
-                    items, text, note = await asyncio.to_thread(extract, fname, data)
+                    items, text, note = await run_heavy(extract, fname, data)
                 except Exception as e:
                     logger.warning(f"[MYQUIZ] file read failed: {e}")
                     note = "Couldn't download that file. Please send it again."
@@ -938,7 +940,7 @@ class MyQuizMixin:
                 user_words = await asyncio.to_thread(self.db.get_user_custom_words, user.id) or []
             except Exception:
                 user_words = []
-        qs, probs = (await asyncio.to_thread(parse_questions, text, items, user_words)) if (text or items) else ([], [])
+        qs, probs = (await run_heavy(parse_questions, text, items, user_words)) if (text or items) else ([], [])
         return qs, probs, note or "", f_entry
 
     @staticmethod
@@ -1163,8 +1165,8 @@ class MyQuizMixin:
             try:
                 tg_file = await context.bot.get_file(f["file_id"], read_timeout=60)
                 data = bytes(await tg_file.download_as_bytearray(read_timeout=60))
-                items, text, _note = await asyncio.to_thread(extract, f.get("file_name") or "file", data)
-                got, probs = await asyncio.to_thread(parse_questions, text, items)
+                items, text, _note = await run_heavy(extract, f.get("file_name") or "file", data)
+                got, probs = await run_heavy(parse_questions, text, items)
             except Exception as e:
                 logger.warning(f"[MYQUIZ] re-read {f.get('file_name')} failed: {e}")
                 continue

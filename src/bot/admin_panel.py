@@ -12,6 +12,8 @@ stays identical to typing the command.
 """
 
 import asyncio
+
+from src.utils.heavy import run_heavy
 import logging
 import re
 
@@ -732,7 +734,7 @@ class AdminPanelMixin:
         else:
             await self._reply(update, f"{e('warn')} <b>Send text, a file, or forward a quiz poll.</b>")
             return
-        res = await asyncio.to_thread(bulk_import, text, self.quiz_manager, items)
+        res = await run_heavy(bulk_import, text, self.quiz_manager, items)
         if src == "text" and not res["imported"] and not res["duplicates"] and not res["problems"]:
             # nothing recognised: maybe the old 6-line /addquiz layout
             await self.cmd_addquiz(update, context)

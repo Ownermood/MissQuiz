@@ -4,6 +4,8 @@ AdminCommandsMixin — /addquiz /delquiz /editquiz /importquiz /dev /broadcast
 """
 
 import asyncio
+
+from src.utils.heavy import run_heavy
 import logging
 import os
 import html
@@ -810,7 +812,7 @@ class AdminCommandsMixin(object):
         # Any file type → questions (src/bot/file_extract.py)
         from src.bot.file_extract import extract
         try:
-            items, text, note = await asyncio.to_thread(extract, fname, bytes(raw_bytes))
+            items, text, note = await run_heavy(extract, fname, bytes(raw_bytes))
         except Exception as e:
             logger.warning(f"[IMPORT] could not read {fname!r}: {e}")
             items, text, note = [], "", "This file looks damaged or isn't what its name says."
@@ -886,7 +888,7 @@ class AdminCommandsMixin(object):
         try:
             t0 = time.monotonic()
             from src.bot.quiz_parser import bulk_import
-            result  = await asyncio.to_thread(bulk_import, text, self.quiz_manager, items)
+            result  = await run_heavy(bulk_import, text, self.quiz_manager, items)
             elapsed = time.monotonic() - t0
 
             detected = result.get("total_detected", 0)
