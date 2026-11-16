@@ -137,9 +137,35 @@ class UI:
 
     # ── Inline mention ────────────────────────────────────────
     @staticmethod
+    def clean_name(name, limit: int = 32) -> str:
+        """Plain display name without the junk people put in Telegram names:
+        blank look-alikes (ㅤ U+3164, ⠀ U+2800, …), zero-width / direction marks and
+        stacked combining marks (z̷̢a̶l̸g̵o). Those made table rows giant and names blank.
+        Accepts already-escaped names too (unescapes first). Cut to `limit` chars."""
+        import re as _re
+        import unicodedata as _ud
+        s = html.unescape(str(name or ""))
+        s = _re.sub(r"[\u115F\u1160\u3164\uFFA0\u2800\u200B\u200C\u200E\u200F\u202A-\u202E"
+                    r"\u2060-\u206F\uFEFF\u00AD\u180E\u034F\U000E0000-\U000E007F]", "", s)
+        out, marks = [], 0
+        for ch in s:                                   # keep at most 2 combining marks in a row
+            if _ud.category(ch) in ("Mn", "Me"):
+                marks += 1
+                if marks > 2:
+                    continue
+            else:
+                marks = 0
+            out.append(ch)
+        s = " ".join("".join(out).split())             # newlines, U+3000, NBSP … → one space
+        if len(s) > limit:
+            s = s[:limit - 1].rstrip() + "…"
+        return s or "Player"
+
+    @staticmethod
     def mention(user_id: int, name: str) -> str:
-        """HTML inline mention — clicking opens the user's Telegram profile."""
-        safe = html.escape(str(name))
+        """HTML inline mention — clicking opens the user's Telegram profile.
+        `name` may be raw or already HTML-escaped (display_name): never double-escaped."""
+        safe = html.escape(UI.clean_name(name), quote=False)
         if user_id:
             return f'<a href="tg://user?id={user_id}">{safe}</a>'
         return f'<b>{safe}</b>'

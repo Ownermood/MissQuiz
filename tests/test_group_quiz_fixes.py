@@ -1,0 +1,90 @@
+"""Group quiz fixes: names (double-escape, blank fillers), long options, compact history, next part."""
+
+import bson
+
+import src.bot.group_quiz as gq
+from src.bot.group_quiz import Session, _short
+from src.bot.ui import UI
+from tests.test_group_quiz import (App, GROUP, answer_all, ctx, fast, press, questions,  # noqa: F401
+                                   user, wait_done)
+
+
+def test_names_not_double_escaped_and_fillers_removed():
+    assert UI.mention(5, "Mimii&gt;&gt;Δ") == '<a href="tg://user?id=5">Mimii&gt;&gt;Δ</a>'
+    assert UI.mention(5, "Mimii>>Δ") == '<a href="tg://user?id=5">Mimii&gt;&gt;Δ</a>'
+    assert UI.clean_name("🦦" + "ㅤ" * 40) == "🦦"                # Hangul filler made giant rows
+    assert UI.clean_name("⠀​ ") == "Player"
+    assert UI.clean_name("x" * 60).endswith("…") and len(UI.clean_name("x" * 60)) == 32
+    assert UI.clean_name("👨‍👩‍👧 Fam") == "👨‍👩‍👧 Fam"   # emoji ZWJ kept
+
+
+def test_rich_table_name_escaped_once():
+    s = Session(chat_id=GROUP, chat_title="G", title="T", questions=questions(2), secs=10,
+                started_by=1, starter_name="H", idx=2)
+    s.scores["9"] = {"name": "Mimii>>Δ" + "ㅤ" * 30, "correct": 2, "wrong": 0, "score": 2, "time": 3}
+    out = gq.GroupQuizMixin._gq_result_rich_html(App(), s, False)
+    assert "Mimii&gt;&gt;Δ</a>" in out and "&amp;gt;" not in out and "ㅤ" not in out
+
+
+def test_short_cuts_on_word():
+    t = _short("A) " + "word " * 40, 100)
+    assert len(t) <= 100 and t.endswith("…") and not t.endswith(" …")
+
+
+async def test_long_options_full_text_card_and_lettered_poll_options():
+    app = App()
+    c, polls, sent = ctx(admins=(1,))
+    long_opt = "The International Cricket Council (ICC) is headquartered in Dubai and represents 108 member countries"
+    qs = [{"question": "Which is incorrect?", "options": [long_opt + " worldwide today", "short"],
+           "correct_answer": 1}] * 3
+    sid = app.real.create_quiz_set(1, "Cricket", qs, 20)
+    await press(app, c, user(1), f"gq|set|1|{sid}")
+    gq.ACTIVE[GROUP].secs = 0.02
+    await wait_done()
+    card = next(t for t in sent if t.startswith("❓ <b>Q1/3"))
+    assert "member countries worldwide today" in card and "<b>A)</b>" in card
+    opts = polls[0][1]["options"]
+    assert all(len(o) <= 100 for o in opts) and opts[0].startswith("A) ") and opts[1] == "B) short"
+    assert polls[0][1]["question"].endswith("Which is incorrect?")    # short question stays in poll
+
+
+async def test_short_options_unchanged_no_card():
+    app = App()
+    c, polls, sent = ctx(admins=(1,))
+    await press(app, c, user(1), "gq|bot|1|10")
+    gq.ACTIVE[GROUP].secs = 0.01
+    await answer_all(app, polls, {7: 0}, 10)
+    await wait_done()
+    assert polls[0][1]["options"] == ["right", "wrong"] and not any(t.startswith("❓") for t in sent)
+
+
+def test_history_compact_and_saved_doc_small():
+    qs = [{"question": "Q" * 280, "options": ["o" * 100] * 4, "correct_answer": 2,
+           "explanation": "e" * 200} for _ in range(200)]
+    s = Session(chat_id=GROUP, chat_title="G", title="T", questions=qs, secs=10, started_by=1)
+    for i in range(200):
+        s.polls[f"p{i}"] = (i, 2, 0.0)
+    for uid in range(120):
+        for i in range(200):
+            s.record(f"p{i}", uid, f"P{uid}", [i % 4])
+    size = len(bson.encode(s.to_doc()))
+    assert size < 2_000_000, size                     # was ~14 MB → near Mongo's 16 MB limit
+    item = s.history_item(s.user_history["3"][1])
+    assert item["selected"] == "o" * 100 and item["correct"] == "o" * 100 and item["is_correct"] is False
+    assert item["question"] == "Q" * 280 and item["explanation"] == "e" * 200
+    old = {"q_num": 1, "question": "old", "selected": "a", "correct": "b", "is_correct": False}
+    assert s.history_item(old) is old                 # sessions saved before the update still work
+
+
+async def test_next_part_after_middle_part_points_after_it():
+    app = App()
+    c, polls, sent = ctx(admins=(1,))
+    sid = app.real.create_quiz_set(1, "Bank", questions(80), 20)
+    await press(app, c, user(1), f"gq|part|1|{sid}|25|25")              # Q26–Q50
+    s = gq.ACTIVE[GROUP]
+    assert s.part_start == 25 and "Q26–Q50" in s.title
+    s.secs = 0.01
+    await answer_all(app, polls, {7: 0}, 25)
+    await wait_done()
+    kb = c.bot.send_message.await_args.kwargs["reply_markup"]
+    assert kb.inline_keyboard[0][0].text == "▶️ Next part · from Q51"

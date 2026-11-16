@@ -133,23 +133,27 @@ class Session:
         # Calculate net score with negative marking
         sc["score"] = round(sc["correct"] * self.marks_per_q - sc["wrong"] * self.negative_rate, 2)
 
-        # Record answer history for personal review (/result)
+        # Answer history for /result. Only numbers are stored (texts come from self.questions):
+        # 100+ players × 200 Q with full texts made the saved session 10+ MB (Mongo limit 16 MB)
+        # and every save stalled the bot.
         if 0 <= q_idx < len(self.questions):
-            q_data = self.questions[q_idx]
-            q_text = str(q_data.get("question") or "")
-            opts = [str(o) for o in (q_data.get("options") or [])]
-            selected_txt = opts[option_ids[0]] if 0 <= option_ids[0] < len(opts) else "Option"
-            correct_txt = opts[correct] if 0 <= correct < len(opts) else "Option"
-            exp = str(q_data.get("explanation") or "").strip()
-            self.user_history.setdefault(str(uid), []).append({
-                "q_num": q_idx + 1,
-                "question": q_text,
-                "selected": selected_txt,
-                "correct": correct_txt,
-                "is_correct": is_right,
-                "explanation": exp
-            })
+            self.user_history.setdefault(str(uid), []).append(
+                {"q_num": q_idx + 1, "sel": int(option_ids[0]), "is_correct": is_right})
         return True
+
+    def history_item(self, item: Dict) -> Dict:
+        """Full view of one stored answer (old saved sessions already have the texts)."""
+        if "question" in item:
+            return item
+        q_idx = int(item.get("q_num", 0)) - 1
+        q = self.questions[q_idx] if 0 <= q_idx < len(self.questions) else {}
+        opts = [str(o) for o in (q.get("options") or [])]
+        sel, cor = int(item.get("sel", -1)), int(q.get("correct_answer", 0) or 0)
+        return {"q_num": q_idx + 1, "question": str(q.get("question") or ""),
+                "selected": opts[sel] if 0 <= sel < len(opts) else "Option",
+                "correct": opts[cor] if 0 <= cor < len(opts) else "Option",
+                "is_correct": bool(item.get("is_correct")),
+                "explanation": str(q.get("explanation") or "").strip()}
 
     def ranking(self) -> List[Tuple[int, Dict]]:
         rows = [(int(u), s) for u, s in self.scores.items()]
@@ -213,6 +217,17 @@ def _lobby_kb(s: Session) -> InlineKeyboardMarkup:
     ])
 
 
+def _short(text: str, limit: int) -> str:
+    """Cut at a word boundary with … (poll options are max 100 chars)."""
+    text = " ".join(str(text).split())
+    if len(text) <= limit:
+        return text
+    cut = text[:limit - 1]
+    if " " in cut[limit // 2:]:
+        cut = cut[:cut.rfind(" ")]
+    return cut.rstrip(" ,;:-") + "…"
+
+
 def _medal(i: int) -> str:
     return ("🥇", "🥈", "🥉")[i] if i < 3 else f"{i + 1}."
 
@@ -235,6 +250,10 @@ class GroupQuizMixin:
         except Exception as e:
             logger.warning(f"[GQUIZ] {fn} failed: {e}")
             return default
+
+    def _gq_name(self, user) -> str:
+        """Player name as plain text (escaped only where it is printed)."""
+        return UI.clean_name(self._bt_name(user))
 
     async def _gq_save(self, s: Session) -> None:
         if s.status in ("lobby", "running", "paused"):
@@ -411,7 +430,7 @@ class GroupQuizMixin:
             pass
         s = Session(
             chat_id=chat_id, chat_title=chat_title, title=title[:60], questions=questions,
-            secs=max(5, min(secs, 600)), started_by=user.id, starter_name=self._bt_name(user),
+            secs=max(5, min(secs, 600)), started_by=user.id, starter_name=self._gq_name(user),
             thread_id=thread_id, set_id=set_id, negative_rate=negative_rate,
             status="running" if skip_lobby else "lobby", part_start=part_start,
         )
@@ -601,18 +620,27 @@ class GroupQuizMixin:
             await self._gq_finish(context, s)
 
     async def _gq_ask(self, context, s: Session, q: Dict, num: int, n: int) -> bool:
-        opts = [str(o)[:100] for o in q.get("options") or []][:10]
+        full = [" ".join(str(o).split()) for o in q.get("options") or []][:10]
         correct = int(q.get("correct_answer", 0))
-        if len(opts) < 2:
+        if len(full) < 2:
             return True                                    # broken question: just skip it
-        if not 0 <= correct < len(opts):
+        if not 0 <= correct < len(full):
             correct = 0
         cat_e = UI.cat_emoji(q.get("category", "")) if q.get("category") else "💡"
         head = f"[{num}/{n}] {cat_e} "
-        qtext = str(q.get("question") or "")
-        if len(head) + len(qtext) > 300:                   # long question: text first
-            await self._gq_send(context, s, f"❓ <b>Q{num}/{n} {cat_e}</b>\n{html.escape(qtext)}")
-            qtext = "Read the question above ⬆️"
+        qtext = str(q.get("question") or "").strip()
+        long_q = len(head) + len(qtext) > 300              # Telegram poll: question ≤ 300 chars
+        long_o = any(len(o) > 100 for o in full)           # … and each option ≤ 100 chars
+        opts = full
+        if long_q or long_o:                               # full text first, so nothing is lost
+            card = f"❓ <b>Q{num}/{n} {cat_e}</b>\n{html.escape(qtext[:3000])}"
+            if long_o:
+                card += "\n\n" + "\n".join(f"<b>{chr(65 + k)})</b> {html.escape(o[:400])}"
+                                            for k, o in enumerate(full))
+                opts = [_short(f"{chr(65 + k)}) {o}", 100) for k, o in enumerate(full)]
+            await self._gq_send(context, s, card)
+            if long_q:
+                qtext = "Read the question above ⬆️"
         kw = dict(chat_id=s.chat_id, question=head + qtext, options=opts, type=Poll.QUIZ,
                   correct_option_id=correct, is_anonymous=False, open_period=s.secs)
         exp = str(q.get("explanation") or "").strip()
@@ -653,7 +681,7 @@ class GroupQuizMixin:
         s = ACTIVE.get(chat_id) if chat_id is not None else None
         if not s:
             return chat_id is not None
-        return s.record(poll_id, user.id, self._bt_name(user), list(option_ids or []))
+        return s.record(poll_id, user.id, self._gq_name(user), list(option_ids or []))
 
     def _gq_share_kb(self, context, s: Session) -> InlineKeyboardMarkup:
         """Play again (admins) + Share Quiz + Download HTML Report."""
@@ -812,7 +840,7 @@ class GroupQuizMixin:
                 medals = ("🥇", "🥈", "🥉")
                 for idx_r, (uid, sc) in enumerate(rank[:3]):
                     r_pos = idx_r + 1
-                    p_name = sc.get("name") or "Player"
+                    p_name = UI.clean_name(sc.get("name") or "Player")
                     cor = int(sc.get("correct", 0))
                     pts = float(sc.get("score", cor))
                     t_sec = float(sc.get("time", 0.0))
@@ -916,7 +944,7 @@ class GroupQuizMixin:
         wrong = sc.get("wrong", 0)
         score = sc.get("score", correct)
         accuracy = round(100 * correct / total) if total else 0
-        ans_list = s.user_history.get(str(user.id), [])
+        ans_list = [s.history_item(it) for it in s.user_history.get(str(user.id), [])]
 
         report = [
             "📊 <b>Personal Quiz Scorecard</b>",
@@ -1172,8 +1200,8 @@ class GroupQuizMixin:
                 for uid_str, sc in last.scores.items():
                     results.append({
                         "user_id": int(uid_str),
-                        "user_name": sc.get("name", "Player"),
-                        "name": sc.get("name", "Player"),
+                        "user_name": UI.clean_name(sc.get("name", "Player")),
+                        "name": UI.clean_name(sc.get("name", "Player")),
                         "score": sc.get("score", sc.get("correct", 0)),
                         "correct": sc.get("correct", 0),
                         "wrong": sc.get("wrong", 0),
@@ -1196,8 +1224,23 @@ class GroupQuizMixin:
                     parse_mode=ParseMode.HTML
                 )
             except Exception as ex:
-                logger.error(f"[GQUIZ] HTML report failed: {ex}", exc_info=True)
-                await query.answer("Please start me in DM first so I can send the file!", show_alert=True)
+                # query.answer() was already used above, so a 2nd alert never showed: tell them in the chat
+                blocked = any(w in str(ex).lower() for w in ("forbidden", "chat not found", "blocked", "initiate"))
+                if blocked:
+                    logger.info(f"[GQUIZ] HTML report: {user.id} hasn't started the bot in DM")
+                else:
+                    logger.error(f"[GQUIZ] HTML report failed: {ex}", exc_info=True)
+                bot_u = getattr(context.bot, "username", "") or ""
+                try:
+                    await query.message.reply_text(
+                        (f"⚠️ {UI.mention(user.id, self._gq_name(user))}, open my DM and tap Start first, "
+                         "then press 🌐 Download HTML Report again.") if blocked else
+                        "⚠️ <b>Couldn't make the HTML report right now.</b> Please try again in a minute.",
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                            "💬 Open DM", url=f"https://t.me/{bot_u}?start=start")]]) if blocked and bot_u else None)
+                except Exception:
+                    pass
             return
 
         if action == "next":                               # gq|next|chat|start|size
@@ -1256,7 +1299,7 @@ class GroupQuizMixin:
                 await query.answer("The quiz has already started! Answer the live polls 👇", show_alert=True)
                 return
             uid_s = str(user.id)
-            p_name = self._bt_name(user)
+            p_name = self._gq_name(user)
             if uid_s in s.ready_players:
                 await query.answer(f"✅ You are already marked Ready! ({len(s.ready_players)} players in lobby)", show_alert=False)
                 return
