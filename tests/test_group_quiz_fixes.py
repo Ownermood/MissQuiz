@@ -149,3 +149,20 @@ async def test_pause_resume_commands_and_quick_resume_does_not_skip():
 def test_explanation_cut_on_word():
     t = _short("ICC ka headquarter Dubai mein hai aur iske 108 members " * 6, 200)
     assert len(t) <= 200 and t.endswith("…") and t[-2] != " "
+
+
+async def test_stopquiz_in_lobby_clears_saved_session(monkeypatch):
+    from unittest.mock import AsyncMock
+    from tests.test_group_quiz import group_upd
+    monkeypatch.setattr(gq, "USE_LOBBY", True)
+    monkeypatch.setattr(gq, "LOBBY_TIMEOUT", 0)
+    app = App()
+    c, polls, sent = ctx(admins=(1,))
+    c.bot.pin_chat_message = AsyncMock()
+    c.bot.unpin_chat_message = AsyncMock()
+    await press(app, c, user(1), "gq|bot|1|10")
+    assert app.real.list_quiz_sessions()                         # lobby saved
+    await app.cmd_stopquiz(group_upd(user(1)), c)
+    assert GROUP not in gq.ACTIVE and app.real.list_quiz_sessions() == []
+    c.bot.unpin_chat_message.assert_awaited_once()
+    assert "cancelled" in app.replies[-1][0]

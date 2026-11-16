@@ -1432,6 +1432,14 @@ class GroupQuizMixin:
         if user.id != s.started_by and not await self._gq_is_admin(context, chat.id, user, msg):
             await self._reply(update, "⛔ <b>Only group admins can stop the quiz.</b>")
             return
+        if s.status == "lobby":                  # no loop runs yet: close it here (was left saved as
+            ACTIVE.pop(chat.id, None)            # "lobby" → came back after the next restart)
+            s.status = "stopped"
+            await self._gq_unpin(context, s)
+            await self._gq_save(s)
+            await self._gq_edit_ctrl(context, s, "❌ <b>Lobby cancelled.</b>")
+            await self._reply(update, "❌ <b>Quiz lobby cancelled.</b>")
+            return
         s.status = "stopped"
         s.wake.set()
 
