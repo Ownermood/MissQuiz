@@ -1487,6 +1487,15 @@ function rs(){{document.body.style.overflow='hidden';location.reload()}}
 # --------------------------------------------------------------------------
 
 _ANALYSIS_CSS = """
+.stat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 26px; }
+@media (min-width: 640px) { .stat-grid { grid-template-columns: repeat(4, 1fr); } }
+.stat-tile { background: var(--color-surface-alt); border-radius: var(--radius-md); padding: 16px 12px; text-align: center; }
+.stat-tile .value { font-size: 1.5rem; font-weight: 800; }
+.stat-tile .label { font-size: 0.78rem; color: var(--color-text-muted); margin-top: 2px; }
+.chart-card h3 { margin: 0 0 10px; font-size: .9rem; color: var(--color-text-muted); font-weight: 600; }
+.chart-card svg { width: 100%; height: auto; display: block; }
+.leaderboard td { white-space: nowrap; }
+.leaderboard td:nth-child(2) { white-space: normal; min-width: 110px; }
 .hero {
   padding: 34px clamp(16px, 5vw, 40px);
   margin: 20px 0;
@@ -1682,6 +1691,49 @@ _ANALYSIS_JS_TEMPLATE = """
 """
 
 
+def _svg_bars(labels: list, values: list, max_v: float) -> str:
+    """Horizontal bar chart as inline SVG (works offline, no Chart.js)."""
+    if not values:
+        return '<p style="color:var(--color-text-muted);">No scores yet.</p>'
+    max_v = max(max_v or 0, max(values), 1.0)
+    row, lab_w, w = 26, 140, 520
+    h = row * len(values) + 8
+    out = [f'<svg viewBox="0 0 {w} {h}" role="img" aria-label="Top scores">']
+    for k, (name, v) in enumerate(zip(labels, values)):
+        y = 4 + k * row
+        bw = max(2.0, (w - lab_w - 60) * v / max_v)
+        nm = str(name)
+        nm = nm if len(nm) <= 18 else nm[:17] + "…"
+        out.append(
+            f'<text x="{lab_w - 8}" y="{y + 17}" text-anchor="end" font-size="13" '
+            f'fill="var(--color-text-muted)">{_esc(nm)}</text>'
+            f'<rect x="{lab_w}" y="{y + 4}" width="{bw:.1f}" height="16" rx="5" fill="var(--color-primary)"/>'
+            f'<text x="{lab_w + bw + 6:.1f}" y="{y + 17}" font-size="12" font-weight="700" '
+            f'fill="var(--color-text)">{v:g}</text>')
+    out.append("</svg>")
+    return "".join(out)
+
+
+def _svg_donut(passed: int, failed: int) -> str:
+    """Pass / not-cleared donut as inline SVG."""
+    total = passed + failed
+    if total <= 0:
+        return '<p style="color:var(--color-text-muted);">No players.</p>'
+    import math
+    r, c = 70, 2 * math.pi * 70
+    p_len = c * passed / total
+    return (
+        '<svg viewBox="0 0 240 240" role="img" aria-label="Passed vs not cleared">'
+        f'<circle cx="120" cy="110" r="{r}" fill="none" stroke="#dc2626" stroke-width="28"/>'
+        f'<circle cx="120" cy="110" r="{r}" fill="none" stroke="#16a34a" stroke-width="28" '
+        f'stroke-dasharray="{p_len:.2f} {c:.2f}" transform="rotate(-90 120 110)"/>'
+        f'<text x="120" y="116" text-anchor="middle" font-size="26" font-weight="800" '
+        f'fill="var(--color-text)">{round(100 * passed / total)}%</text>'
+        f'<text x="40" y="222" font-size="13" fill="#16a34a">● Passed {passed}</text>'
+        f'<text x="128" y="222" font-size="13" fill="#dc2626">● Not cleared {failed}</text>'
+        '</svg>')
+
+
 def _ordinal_rank_badge(rank: int) -> str:
     icons = {1: "fa-crown", 2: "fa-medal", 3: "fa-medal"}
     return f'<i class="fa-solid {icons.get(rank, "fa-star")}"></i>'
@@ -1772,7 +1824,10 @@ async def render_analysis_html(quiz: dict, results: list[dict]) -> tuple[bytes, 
     for i in range(min(3, n_participants)):
         r = ranked[i]
         name = _esc(r.get("user_name", "Anonymous"))
-        score = _esc(r.get("score", 0))
+        try:
+            score = f"{float(r.get('score', 0)):g}"          # 179.0 → 179, 178.75 stays
+        except (TypeError, ValueError):
+            score = _esc(r.get("score", 0))
         total_q = _esc(r.get("total_questions", n_questions))
         rank = i + 1
         podium_slots[i] = f"""
@@ -1887,15 +1942,16 @@ async def render_analysis_html(quiz: dict, results: list[dict]) -> tuple[bytes, 
 </div>
 """
 
-    charts_section = """
+    charts_section = f"""
 <div class="container section">
   <div class="section-title"><i class="fa-solid fa-chart-column"></i> Score overview</div>
   <div class="charts-grid">
-    <div class="card chart-card">
-      <canvas id="scoreChart" height="240"></canvas>
+    <div class="card chart-card"><h3>Top {len(top_n)} scores</h3>
+      {_svg_bars([r.get("user_name", "Anonymous") for r in top_n],
+                 [float(r.get("score", 0)) for r in top_n], float(n_questions))}
     </div>
-    <div class="card chart-card">
-      <canvas id="passFailChart" height="240"></canvas>
+    <div class="card chart-card"><h3>Passed vs not cleared ({pass_percent:g}% to pass)</h3>
+      {_svg_donut(pass_count, fail_count)}
     </div>
   </div>
 </div>
@@ -1948,7 +2004,7 @@ async def render_analysis_html(quiz: dict, results: list[dict]) -> tuple[bytes, 
         title=f"{quiz_name} - Analysis",
         extra_head=_ANALYSIS_CSS,
         body=body,
-        extra_scripts=_CHARTJS_SCRIPT + f"<script>{analysis_js}</script>",
+        extra_scripts=f"<script>{analysis_js}</script>",     # charts are inline SVG now
     )
 
     filename = f"{_slug(quiz_name)}-{qid}-analysis.html"
