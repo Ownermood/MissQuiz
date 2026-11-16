@@ -166,3 +166,13 @@ async def test_stopquiz_in_lobby_clears_saved_session(monkeypatch):
     assert GROUP not in gq.ACTIVE and app.real.list_quiz_sessions() == []
     c.bot.unpin_chat_message.assert_awaited_once()
     assert "cancelled" in app.replies[-1][0]
+
+
+async def test_next_part_button_works_after_restart():
+    app = App()
+    c, polls, sent = ctx(admins=(1,))
+    sid = app.real.create_quiz_set(1, "Bank", questions(80), 20)
+    assert not getattr(app, "_gq_last", None)                     # fresh process, nothing in memory
+    await press(app, c, user(1), f"gq|next|{GROUP}|25|25|{sid}")
+    s = gq.ACTIVE[GROUP]
+    assert s.part_start == 25 and "Q26–Q50" in s.title

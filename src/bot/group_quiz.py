@@ -700,7 +700,7 @@ class GroupQuizMixin:
             start = s.part_start + min(s.idx, len(s.questions))
             size = max(1, len(s.questions))
             nxt = [[InlineKeyboardButton(f"▶️ Next part · from Q{start + 1}",
-                                         callback_data=f"gq|next|{s.chat_id}|{start}|{size}", style="success")]]
+                                         callback_data=f"gq|next|{s.chat_id}|{start}|{size}|{s.set_id}"[:64], style="success")]]
         return InlineKeyboardMarkup(nxt + [
             [InlineKeyboardButton("🔁 Play again", callback_data=f"gq|again|{s.chat_id}",
                                   style=None if nxt else "success"),
@@ -1257,6 +1257,8 @@ class GroupQuizMixin:
                 return
             last = getattr(self, "_gq_last", {}).get(chat_id)
             sid = getattr(last, "set_id", "") if last else ""
+            if len(parts) > 5 and parts[5]:
+                sid = parts[5]                             # quiz id is in the button: works after a restart
             if not sid:
                 await query.answer("Start it again with /startquiz.", show_alert=True)
                 return
@@ -1272,7 +1274,10 @@ class GroupQuizMixin:
                 return
             chunk = allq[start:start + size]
             await query.answer("Next part! 🚀")
-            await self._gq_begin(context, chat_id, last.thread_id, user,
+            thread = (last.thread_id if last else
+                      (getattr(query.message, "message_thread_id", None)
+                       if getattr(query.message, "is_topic_message", False) else None))
+            await self._gq_begin(context, chat_id, thread, user,
                                  f"{qs.get('title') or 'Quiz'} · Q{start + 1}–Q{start + len(chunk)}",
                                  chunk, int(qs.get("secs") or BOT_SECS), sid, part_start=start)
             return

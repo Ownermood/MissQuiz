@@ -395,7 +395,7 @@ async def test_next_part_button_continues_big_quiz_in_one_tap():
     await wait_done()
     kb = c.bot.send_message.await_args.kwargs["reply_markup"]
     first = kb.inline_keyboard[0][0]
-    assert first.text == "▶️ Next part · from Q26" and first.callback_data == f"gq|next|{GROUP}|25|25"
+    assert first.text == "▶️ Next part · from Q26" and first.callback_data == f"gq|next|{GROUP}|25|25|{sid}"
     q = await press(app, c, user(2), first.callback_data)                 # member can't
     assert q.answer.await_args.kwargs.get("show_alert") is True and not gq.is_active(GROUP)
     await press(app, c, admin, first.callback_data)
