@@ -49,7 +49,7 @@ tests/                      ~320 tests (pytest, mongomock): web security, schedu
 
 **Branding:** naam "Miss Quiz Bot", community `t.me/VillanCommunity` (`ui.COMMUNITY_URL`). `/start` = photo (agar set) + bold blockquote caption + rangeen buttons (`_start_kb`). `/help` = 3 bold blockquotes (Play / Progress / Groups) + buttons, koi admin section nahi. Command menu mein sirf user commands; admin sab kuch /start ke red Admin Panel se (purane per-admin menus startup pe delete).
 
-**MongoDB collections:** `settings` (key/value), `questions`, `users`, `groups`, `broadcasts`, `activities`, `developers`, `poll_map`, `auto_quiz_state`, `battles` (open challenges, TTL), `quiz_sets` (users ke apne quiz), `quiz_sessions` (chalte group quiz), `_counters` (auto-increment quiz id).
+**MongoDB collections:** `settings` (key/value), `questions`, `users`, `groups`, `broadcasts`, `activities`, `developers`, `poll_map`, `auto_quiz_state`, `battles` (open challenges, TTL), `quiz_sets` (users ke apne quiz), `quiz_sessions` (chalte group quiz + har group ka AAKHRI khatam quiz, status done/stopped: Play again / Next part / HTML report / /result restart ke baad bhi), `quiz_schedules` (/schedule, restart pe re-arm), `_counters` (auto-increment quiz id).
 
 **Auth layers:**
 - Bot: `_is_owner()` / `_is_authorized()` (`handlers_main.py`), `check_access()` (`dev_commands.py`). Owner + WIFU + `developers` collection.
@@ -188,6 +188,9 @@ Pakke bugs aur sirf "possible risks" alag-alag likho.
 
 ## 8. Telegram limits jo yaad rakhne hain
 
+- **Lambe question/option kabhi DB mein mat kaato.** Bhejte waqt `ui.fit_poll(head, question, options, label)`: sab fit ho to card None; warna pehle pura text wala card (A) B) …), poll mein "A) …" options / "Read the question above ⬆️". Group quiz, battle, solo DM, /quiz sab isse. Auto quiz sirf `short_text` (har ghante card chhod ke spam nahi). Explanation `short_text(exp, 200)`
+- Naam: `UI.clean_name` (unescape + invisible/filler chars hatao + 32 char); `UI.mention` khud clean+escape karta hai, kabhi double escape nahi. Group quiz scores mein raw naam (`_gq_name`)
+
 - Poll: question ≤ 300 chars, option ≤ 100 chars, explanation ≤ 200 chars (`scheduler.py` pehle se clamp karta hai)
 - `open_period` aur `close_date` saath mein nahi chalte
 - Channel mein non-anonymous poll nahi bhej sakte. Anonymous poll ke `poll_answer` updates nahi aate.
@@ -204,4 +207,8 @@ Pakke bugs aur sirf "possible risks" alag-alag likho.
 - `send_poll` timeout pe Telegram ne poll shayad bhej diya ho; 2 min retry se ek extra poll reh sakta hai jo track nahi hota. Rare, accept kiya.
 - Rate limit: `AIORateLimiter` (poore bot pe, 429 pe khud retry). Poll answers ki DB writes worker thread mein, `concurrent_updates(16)`; scheduler ki DB calls bhi thread mein. Load test: ~30 → ~240 answers/sec.
 - Housekeeping job roz: `activities` 30 din, `poll_map` + memory polls 7 din (`purge_old_data`). Blocked user ka data delete nahi hota, sirf `pm_accessible=False`.
+- Freeze watchdog (`src/utils/watchdog.py`, `WATCHDOG_SECS`=120, 0 = band): loop 2 min atka to har thread ka stack log mein + exit → systemd restart. Log: `journalctl -u miss-quiz | grep -A60 "WATCHDOG\] bot frozen"`
+- Bhaari file kaam (extract / parse / bulk_import) `src/utils/heavy.run_heavy` (alag 2-thread pool), `asyncio.to_thread` nahi: warna poll answers aur quiz save line mein atakte
+- Group quiz: /pause /resume (host ya admin); Resume sirf pause-wait ko jagata (`in_pause_wait`), chalte sawaal ko nahi kaatta. /schedule HH:MM = IST (`BOT_TZ`), /schedule list|cancel
+- Catch-all `handle_callback` ka pattern `^(?!edit_quiz_)`: naya prefix wala handler baad mein register ho to yahan bhi exclude karo (PTB ek group mein sirf pehla match chalata)
 - Tests abhi bhi kam hain (handlers, parser, poll answers untested).
