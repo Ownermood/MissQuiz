@@ -57,6 +57,7 @@ class DatabaseManager:
         self.battles_col         = self.db["battles"]      # open battle challenges (survive restart)
         self.quiz_sets_col       = self.db["quiz_sets"]    # users' own quizzes (private, not in the bot pool)
         self.quiz_sessions_col   = self.db["quiz_sessions"]  # running group quizzes (resume after restart)
+        self.quiz_schedules_col  = self.db["quiz_schedules"] # /schedule (survives a restart)
 
         self._ensure_indexes()
         logger.info(f"✅ MongoDB connected: {redact_url(url)} / db={db_name}")
@@ -384,6 +385,27 @@ class DatabaseManager:
 
     def delete_quiz_session(self, chat_id: int) -> None:
         self.quiz_sessions_col.delete_one({"chat_id": chat_id})
+
+    def get_quiz_session(self, chat_id: int) -> Optional[Dict]:
+        """The group's saved session: running, or the last finished one (kept for
+        Play again / HTML report / /result after a restart)."""
+        return self.quiz_sessions_col.find_one({"chat_id": int(chat_id)}, {"_id": 0})
+
+    def find_last_quiz_session_of(self, user_id: int) -> Optional[Dict]:
+        """Most recent group quiz this user played (for /result in DM)."""
+        docs = list(self.quiz_sessions_col.find({f"scores.{int(user_id)}": {"$exists": True}}, {"_id": 0})
+                    .sort("updated_at", DESCENDING).limit(1))
+        return docs[0] if docs else None
+
+    def save_quiz_schedule(self, doc: Dict) -> None:
+        self.quiz_schedules_col.replace_one({"id": doc["id"]}, doc, upsert=True)
+
+    def list_quiz_schedules(self, chat_id: Optional[int] = None) -> List[Dict]:
+        q = {"chat_id": int(chat_id)} if chat_id is not None else {}
+        return list(self.quiz_schedules_col.find(q, {"_id": 0}).sort("at", ASCENDING))
+
+    def delete_quiz_schedule(self, sched_id: str) -> int:
+        return self.quiz_schedules_col.delete_one({"id": str(sched_id)}).deleted_count
 
     def list_quiz_sessions(self) -> List[Dict]:
         return list(self.quiz_sessions_col.find({"status": {"$in": ["lobby", "running", "paused"]}}, {"_id": 0}))

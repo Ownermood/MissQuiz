@@ -218,6 +218,7 @@ class TelegramQuizBot(
         loop.create_task(self._send_owner_alert())
         if self.application is not None:                       # group quizzes running before a restart
             loop.create_task(self.gq_resume_all(self.application.bot))
+            loop.create_task(self.gq_resume_schedules(self.application.bot))   # /schedule entries
             loop.create_task(self._fill_missing_group_titles())
         loop.create_task(self._send_startup_broadcast())
 

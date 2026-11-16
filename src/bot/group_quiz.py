@@ -32,6 +32,20 @@ from src.bot.ui import UI, get_thread_id
 
 logger = logging.getLogger(__name__)
 
+_TASKS: set = set()      # strong refs to background tasks (asyncio keeps only weak ones)
+try:
+    from zoneinfo import ZoneInfo
+    SCHED_TZ = ZoneInfo(__import__("os").getenv("BOT_TZ", "Asia/Kolkata"))
+except Exception:                                    # no tz database: fixed IST
+    from datetime import timezone as _tz
+    SCHED_TZ = _tz(timedelta(hours=5, minutes=30))
+def _spawn(coro):
+    t = asyncio.create_task(coro)
+    _TASKS.add(t)
+    t.add_done_callback(_TASKS.discard)
+    return t
+
+
 START_DELAY = 3          # countdown before Q1
 GAP         = 2          # pause after each question
 LB_EVERY    = 10         # mini leaderboard every N questions
@@ -256,11 +270,30 @@ class GroupQuizMixin:
         """Player name as plain text (escaped only where it is printed)."""
         return UI.clean_name(self._bt_name(user))
 
-    async def _gq_save(self, s: Session) -> None:
-        if s.status in ("lobby", "running", "paused"):
+    async def _gq_save(self, s: Session, keep: bool = False) -> None:
+        """keep=True: a finished quiz stays saved (as done/stopped) until the group's next quiz,
+        so Play again / Next part / HTML report / /result still work after a restart."""
+        if s.status in ("lobby", "running", "paused") or keep:
             await self._gq_db("save_quiz_session", s.to_doc())
         else:
             await self._gq_db("delete_quiz_session", s.chat_id)
+
+    async def _gq_last_get(self, chat_id: int) -> Optional[Session]:
+        """Last finished quiz of this group: memory, else the saved copy (after a restart)."""
+        last = getattr(self, "_gq_last", {}).get(chat_id)
+        if last:
+            return last
+        doc = await self._gq_db("get_quiz_session", chat_id)
+        if isinstance(doc, dict) and doc.get("status") in ("done", "stopped") and doc.get("scores") is not None:
+            try:
+                last = Session.from_doc(doc)
+            except Exception:
+                return None
+            if not hasattr(self, "_gq_last"):
+                self._gq_last = {}
+            self._gq_last[chat_id] = last
+            return last
+        return None
 
     ANON_ADMIN_BOT = 1087968824          # Telegram's GroupAnonymousBot (sender of anonymous admin messages)
 
@@ -442,7 +475,7 @@ class GroupQuizMixin:
             sent = await self._gq_send(context, s, self._gq_head(s) + f"🚀 <b>Starting in {START_DELAY}s…</b>", _kb(s))
             s.ctrl_msg_id = getattr(sent, "message_id", None)
             await self._gq_save(s)
-            asyncio.create_task(self._gq_run(s, context))
+            _spawn(self._gq_run(s, context))
         else:
             sent = await self._gq_send(context, s, _lobby_text(s), _lobby_kb(s))
             s.ctrl_msg_id = getattr(sent, "message_id", None)
@@ -561,7 +594,7 @@ class GroupQuizMixin:
                 f"Get ready: {mentions} 🚀"
             )
         await self._gq_save(s)
-        asyncio.create_task(self._gq_run(s, context))
+        _spawn(self._gq_run(s, context))
 
     # ── loop ─────────────────────────────────────────────────────────────
 
@@ -819,7 +852,7 @@ class GroupQuizMixin:
             await self._gq_db("set_quiz_progress", s.set_id, s.chat_id, s.part_start + asked)
         stopped = s.status == "stopped"
         s.status = "done" if not stopped else "stopped"
-        await self._gq_save(s)
+        await self._gq_save(s, keep=True)
         for pid in list(s.polls):
             self._gq_polls().pop(pid, None)
         if not hasattr(self, "_gq_last"):
@@ -930,14 +963,21 @@ class GroupQuizMixin:
             return
 
         s = ACTIVE.get(chat.id)
-        if not s and hasattr(self, "_gq_last"):
-            s = self._gq_last.get(chat.id)
+        if not s and chat.type != "private":
+            s = await self._gq_last_get(chat.id)
 
         if not s:
             for past in getattr(self, "_gq_last", {}).values():
                 if str(user.id) in past.scores:
                     s = past
                     break
+        if not s:                                          # after a restart: look in the DB
+            doc = await self._gq_db("find_last_quiz_session_of", user.id)
+            if isinstance(doc, dict):
+                try:
+                    s = Session.from_doc(doc)
+                except Exception:
+                    s = None
 
         if not s or str(user.id) not in s.scores:
             await self._reply(update, "ℹ️ <b>No quiz record found for you.</b> Participate in a quiz first!")
@@ -1001,8 +1041,8 @@ class GroupQuizMixin:
             return
 
         s = ACTIVE.get(chat.id)
-        if not s and hasattr(self, "_gq_last"):
-            s = self._gq_last.get(chat.id)
+        if not s:
+            s = await self._gq_last_get(chat.id)
 
         if not s:
             await self._reply(update, "ℹ️ <b>No active or recent quiz session found here.</b>")
@@ -1173,7 +1213,7 @@ class GroupQuizMixin:
             return
 
         if action == "html":
-            last = getattr(self, "_gq_last", {}).get(chat_id) or ACTIVE.get(chat_id)
+            last = await self._gq_last_get(chat_id) or ACTIVE.get(chat_id)
             if not last:
                 await query.answer("No completed quiz record found.", show_alert=True)
                 return
@@ -1255,7 +1295,7 @@ class GroupQuizMixin:
             if is_active(chat_id):
                 await query.answer("A quiz is already running here.", show_alert=True)
                 return
-            last = getattr(self, "_gq_last", {}).get(chat_id)
+            last = await self._gq_last_get(chat_id)
             sid = getattr(last, "set_id", "") if last else ""
             if len(parts) > 5 and parts[5]:
                 sid = parts[5]                             # quiz id is in the button: works after a restart
@@ -1283,7 +1323,7 @@ class GroupQuizMixin:
             return
 
         if action == "again":
-            last = getattr(self, "_gq_last", {}).get(chat_id)
+            last = await self._gq_last_get(chat_id)
             if not last:
                 await query.answer("Start a new one with /startquiz.", show_alert=True)
                 return
@@ -1508,7 +1548,26 @@ class GroupQuizMixin:
             )
             return
 
+        if args[0].lower() in ("cancel", "off", "stop", "clear"):
+            gone = 0
+            for d in await self._gq_db("list_quiz_schedules", chat.id, default=[]) or []:
+                gone += await self._gq_db("delete_quiz_schedule", d.get("id"), default=0) or 0
+            await self._reply(update, f"🗑 <b>{gone} scheduled quiz(zes) cancelled.</b>" if gone
+                              else "ℹ️ <b>No quiz is scheduled here.</b>")
+            return
+        if args[0].lower() in ("list", "show"):
+            docs = await self._gq_db("list_quiz_schedules", chat.id, default=[]) or []
+            if not docs:
+                await self._reply(update, "ℹ️ <b>No quiz is scheduled here.</b>")
+                return
+            lines = [f"• {datetime.fromtimestamp(d['at'], SCHED_TZ):%d %b %H:%M} — <code>{html.escape(str(d.get('set_id')))}</code>"
+                     for d in docs]
+            await self._reply(update, "⏰ <b>Scheduled quizzes</b>\n" + "\n".join(lines)
+                              + "\n<i>/schedule cancel removes them.</i>")
+            return
+
         delay_secs = None
+        at_exact = None
         set_id = "bot20"
 
         if args[0].lower() == "in" and len(args) > 1 and args[1].lower().endswith("m"):
@@ -1523,11 +1582,12 @@ class GroupQuizMixin:
             try:
                 parts = args[0].split(":")
                 target_h, target_m = int(parts[0]), int(parts[1])
-                now = datetime.now()
+                now = datetime.now(SCHED_TZ)            # the owner's clock (IST), not the server's UTC
                 target_dt = now.replace(hour=target_h, minute=target_m, second=0, microsecond=0)
                 if target_dt < now:
                     target_dt += timedelta(days=1)
                 delay_secs = int((target_dt - now).total_seconds())
+                at_exact = target_dt.timestamp()
                 if len(args) > 1:
                     set_id = args[1].removeprefix("gq_")
             except Exception:
@@ -1537,29 +1597,70 @@ class GroupQuizMixin:
             await self._reply(update, "⚠️ Invalid time format. Use <code>/schedule in 15m</code> or <code>/schedule 21:00</code>")
             return
 
+        at = at_exact or (time.time() + delay_secs)
+        doc = {"id": f"{chat.id}_{int(at)}_{random.randint(1000, 9999)}", "chat_id": chat.id,
+               "thread_id": get_thread_id(update), "set_id": set_id, "at": at,
+               "by": user.id, "by_name": self._gq_name(user)}
+        await self._gq_db("save_quiz_schedule", doc)
         mins_left = max(1, round(delay_secs / 60))
+        when = datetime.fromtimestamp(at, SCHED_TZ).strftime("%d %b, %H:%M")
         await self._reply(
             update,
             f"✅ <b>QUIZ SCHEDULED!</b>\n"
             f"━━━━━━━━━━━━━━━━━━\n"
-            f"⏳ <b>Starting in:</b> ~{mins_left} minutes\n"
+            f"⏳ <b>Starting in:</b> ~{mins_left} minutes ({when})\n"
             f"📝 <b>Target Quiz:</b> <code>{html.escape(set_id)}</code>\n"
-            f"👤 <b>Scheduled by:</b> {UI.mention(user.id, user.first_name)}\n"
+            f"👤 <b>Scheduled by:</b> {UI.mention(user.id, self._gq_name(user))}\n"
             f"━━━━━━━━━━━━━━━━━━\n"
-            f"<i>Get ready! The bot will auto-launch the quiz.</i>"
+            f"<i>Get ready! The bot will auto-launch the quiz. /schedule cancel to remove it.</i>"
         )
+        self._gq_schedule_task(context.bot, doc)
 
-        async def scheduled_launch():
-            await asyncio.sleep(delay_secs)
-            if not is_active(chat.id):
-                await context.bot.send_message(
-                    chat.id,
-                    "🚀 <b>SCHEDULED QUIZ STARTING NOW!</b>\nGet ready!",
-                    parse_mode=ParseMode.HTML
-                )
-                await self._gq_start_set(update, context, set_id, auto_part=SCHEDULE_PART)
+    def _gq_schedule_task(self, bot, doc: Dict) -> None:
+        """Wait until doc['at'], then open the quiz. Saved in quiz_schedules, so a restart re-arms it."""
+        async def _go():
+            try:
+                await asyncio.sleep(max(0.0, float(doc["at"]) - time.time()))
+                if not await self._gq_db("delete_quiz_schedule", doc["id"], default=1):
+                    return                                       # cancelled meanwhile
+                chat_id, tid = int(doc["chat_id"]), doc.get("thread_id")
 
-        asyncio.create_task(scheduled_launch())
+                async def _say(text, **kw):
+                    kw.setdefault("parse_mode", ParseMode.HTML)
+                    if tid:
+                        kw["message_thread_id"] = tid
+                    return await bot.send_message(chat_id, text, **kw)
+                if is_active(chat_id):
+                    await _say("⏰ <b>Scheduled quiz skipped:</b> another quiz is running here.")
+                    return
+                await _say("🚀 <b>SCHEDULED QUIZ STARTING NOW!</b>\nGet ready!")
+                msg = SimpleNamespace(reply_text=_say, is_topic_message=bool(tid), message_thread_id=tid,
+                                      forum_topic_closed=None, sender_chat=None)
+                upd = SimpleNamespace(effective_chat=SimpleNamespace(id=chat_id, type="supergroup"),
+                                      effective_user=SimpleNamespace(id=int(doc.get("by") or 0),
+                                                                     first_name=doc.get("by_name") or "Admin",
+                                                                     last_name=None, username=None),
+                                      effective_message=msg, message=msg)
+                await self._gq_start_set(upd, SimpleNamespace(bot=bot, args=[]), str(doc.get("set_id") or "bot20"),
+                                         auto_part=SCHEDULE_PART)
+            except Exception as e:
+                logger.error(f"[GQUIZ] scheduled quiz {doc.get('id')} failed: {e}", exc_info=True)
+        t = asyncio.create_task(_go())
+        _TASKS.add(t)
+        t.add_done_callback(_TASKS.discard)
+
+    async def gq_resume_schedules(self, bot) -> int:
+        """After a restart: re-arm saved /schedule entries (missed by > 1 h → dropped)."""
+        n = 0
+        for d in await self._gq_db("list_quiz_schedules", default=[]) or []:
+            if float(d.get("at") or 0) < time.time() - 3600:
+                await self._gq_db("delete_quiz_schedule", d.get("id"))
+                continue
+            self._gq_schedule_task(bot, d)
+            n += 1
+        if n:
+            logger.info(f"[GQUIZ] re-armed {n} scheduled quiz(zes)")
+        return n
 
     # ── after a restart ──────────────────────────────────────────────────
 
@@ -1589,7 +1690,7 @@ class GroupQuizMixin:
                 continue
             await self._gq_send(context, s, f"♻️ <b>I restarted — continuing “{html.escape(s.title)}” "
                                             f"from Q{s.idx + 1}.</b>")
-            asyncio.create_task(self._gq_run(s, context))
+            _spawn(self._gq_run(s, context))
             n += 1
         if n:
             logger.info(f"[GQUIZ] resumed {n} session(s) after restart")

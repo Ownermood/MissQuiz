@@ -176,3 +176,73 @@ async def test_next_part_button_works_after_restart():
     await press(app, c, user(1), f"gq|next|{GROUP}|25|25|{sid}")
     s = gq.ACTIVE[GROUP]
     assert s.part_start == 25 and "Q26–Q50" in s.title
+
+
+def _app_with_db():
+    import mongomock
+    app = App()
+    client = mongomock.MongoClient()
+    real = app.real
+    real.quiz_schedules_col = client.db.quiz_schedules
+    for fn in ("get_quiz_session", "find_last_quiz_session_of", "save_quiz_schedule",
+               "list_quiz_schedules", "delete_quiz_schedule"):
+        setattr(app.db, fn, getattr(real, fn))
+    return app
+
+
+async def test_play_again_and_result_work_after_restart():
+    from types import SimpleNamespace
+    app = _app_with_db()
+    c, polls, sent = ctx(admins=(1,))
+    await press(app, c, user(1), "gq|bot|1|10")
+    gq.ACTIVE[GROUP].secs = 0.01
+    await answer_all(app, polls, {7: 1}, 10)                          # P7 answers all wrong
+    await wait_done()
+    doc = app.real.get_quiz_session(GROUP)
+    assert doc and doc["status"] == "done" and "7" in doc["scores"]
+    assert app.real.list_quiz_sessions() == []                       # finished quiz is not resumed
+    app._gq_last.clear()                                             # ← restart
+    last = await app._gq_last_get(GROUP)
+    assert last and len(last.questions) == 10
+    # /result in DM finds it in the DB
+    app._gq_last.clear()
+    upd = SimpleNamespace(effective_user=user(7, "P7"), effective_chat=SimpleNamespace(id=7, type="private"),
+                          effective_message=SimpleNamespace(sender_chat=None))
+    await app.cmd_result(upd, c)
+    assert "Questions you missed" in app.replies[-1][0]
+    # Play again after restart
+    app._gq_last.clear()
+    await press(app, c, user(1), f"gq|again|{GROUP}")
+    assert gq.is_active(GROUP) and len(gq.ACTIVE[GROUP].questions) == 10
+
+
+async def test_schedule_uses_ist_saves_and_rearms_after_restart(monkeypatch):
+    import asyncio
+    from datetime import datetime
+    from tests.test_group_quiz import group_upd
+    app = _app_with_db()
+    c, polls, sent = ctx(admins=(1,))
+    c.args = ["21:00", "bot10"]
+    await app.cmd_schedule(group_upd(user(1)), c)
+    docs = app.real.list_quiz_schedules(GROUP)
+    assert len(docs) == 1
+    when = datetime.fromtimestamp(docs[0]["at"], gq.SCHED_TZ)
+    assert (when.hour, when.minute) == (21, 0) and str(gq.SCHED_TZ) == "Asia/Kolkata"
+    c.args = ["cancel"]
+    await app.cmd_schedule(group_upd(user(1)), c)
+    assert app.real.list_quiz_schedules(GROUP) == [] and "1 scheduled" in app.replies[-1][0]
+    # saved schedule due now → re-armed after a restart → quiz opens
+    import time as _t
+    app.real.save_quiz_schedule({"id": "s1", "chat_id": GROUP, "thread_id": None, "set_id": "bot10",
+                                 "at": _t.time() - 5, "by": 1, "by_name": "Admin"})
+    app.real.save_quiz_schedule({"id": "old", "chat_id": GROUP, "thread_id": None, "set_id": "bot10",
+                                 "at": _t.time() - 7200, "by": 1, "by_name": "Admin"})
+    assert await app.gq_resume_schedules(c.bot) == 1
+    for _ in range(100):
+        if gq.is_active(GROUP):
+            break
+        await asyncio.sleep(0.01)
+    assert gq.is_active(GROUP) and app.real.list_quiz_schedules() == []
+    c.args = ["in", "5m"]
+    await app.cmd_schedule(group_upd(user(2)), c)                     # member can't
+    assert "Only group admins" in app.replies[-1][0]
