@@ -311,3 +311,30 @@ async def test_leaderboard_off_in_lobby(monkeypatch):
     await answer_all(app, polls, {7: 0}, 10)
     await wait_done()
     assert not any("After" in t and "questions" in t for t in sent)
+
+
+def test_rich_result_all_113_players_and_emoji_only_name(monkeypatch):
+    monkeypatch.setenv("PREMIUM_EMOJI", "1")
+    from src.bot.premium import premiumize_html
+    s = Session(chat_id=GROUP, chat_title="G", title="T", questions=questions(200), secs=15, started_by=1, idx=200)
+    for i in range(113):
+        uid = 5000000000 + i * 7919
+        s.scores[str(uid)] = {"name": "🎀🖤" if i == 2 else f"Player 🔥 {i}", "correct": 200 - i,
+                              "wrong": i, "score": 200 - i, "time": 900}
+    out = gq.GroupQuizMixin._gq_result_rich_html(App(), s, False)
+    assert "more players" not in out                                  # all 113 listed (was 96)
+    assert "113. " in out and len(premiumize_html(out)) < 32768
+    third = str(5000000000 + 2 * 7919)[-3:]
+    assert f"🎀🖤 #{third}" in out                                     # emoji-only name gets text
+
+
+async def test_html_report_offline_charts_and_stat_tiles():
+    from src.utils.quiz_report import render_analysis_html
+    res = [{"user_id": i, "user_name": f"P{i}", "score": 179.0 - i, "total_questions": 200, "time_taken": 60}
+           for i in range(15)]
+    b, _ = await render_analysis_html(
+        {"quiz_name": "Q", "qid": "x", "questions": [{"question": "q", "options": ["a", "b"], "correct_answer": 0}] * 200},
+        res)
+    page = b.decode()
+    assert "<svg" in page and "Chart.js" not in page and "<canvas" not in page     # works offline
+    assert ".stat-grid" in page and "179 pts" in page and "179.0 pts" not in page

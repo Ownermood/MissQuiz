@@ -420,7 +420,7 @@ def test_rich_result_table_top10_rest_collapsed_and_escaped():
     doc = app._gq_result_rich_html(s, stopped=False)
     assert "GK &lt;Mock&gt; &amp; more" in doc and "N&lt;3&gt;" in doc and "<Mock>" not in doc
     top, rest = doc.split("<details>")
-    assert top.count("<tr>") == 1 + 10 and rest.count("<tr>") == 1 + 15        # header + rows
+    assert top.count("<tr>") == 1 + 10 and rest.count("<li>") == 15 and "<tr>" not in rest   # short lines
     assert "Ranks 11–25 (15 more)" in rest and "Negative −0.25" in doc
     assert 'align="left" valign="middle"' in doc                                  # every cell needs both
     assert app._gq_result_rich_html(Session(chat_id=1, title="x", questions=questions(2), secs=5,

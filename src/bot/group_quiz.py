@@ -791,10 +791,17 @@ class GroupQuizMixin:
             v = round(float(sc.get("score", sc["correct"])), 2)
             return str(int(v)) if v == int(v) else f"{v:g}"
 
-        def row(i, uid, sc):
+        def nm(uid, sc):
+            """Emoji-only name ('🎀🖤') was drawn as a giant emoji in its table cell:
+            add the last 3 digits of the ID so the cell has text (and twins are told apart)."""
+            n_ = UI.clean_name(sc.get("name") or "Player")
+            return n_ if any(ch.isalnum() for ch in n_) else f"{n_} #{str(uid)[-3:]}"
+
+        def row(i, uid, sc, link=True):
             acc = round(100 * sc["correct"] / total)
+            who = UI.mention(uid, nm(uid, sc)) if link else html.escape(nm(uid, sc), quote=False)
             return (f"<tr><td align=\"center\" valign=\"middle\">{_medal(i)}</td>"
-                    f"<td align=\"left\" valign=\"middle\">{UI.mention(uid, sc.get('name') or 'Player')}</td>"
+                    f"<td align=\"left\" valign=\"middle\">{who}</td>"
                     f"<td align=\"right\" valign=\"middle\"><b>{pts(sc)}</b>/{total}</td>"
                     f"<td align=\"right\" valign=\"middle\">{acc}%</td>"
                     f"<td align=\"right\" valign=\"middle\">{mm(sc.get('time', 0))}</td></tr>")
@@ -803,11 +810,22 @@ class GroupQuizMixin:
                     "<th align=\"right\" valign=\"middle\">Score</th><th align=\"right\" valign=\"middle\">Accuracy</th>"
                     "<th align=\"right\" valign=\"middle\">Time</th></tr>")
         rows, size = [], 0
+        try:
+            from src.bot.premium import premium_on, premiumize_html
+            prem = premium_on()
+        except Exception:
+            prem = False
         for i, (uid, sc) in enumerate(rank[:self.RICH_MAX_ROWS]):
-            r = row(i, uid, sc)
-            if size + len(r) > self.RICH_MAX_CHARS - 4000:          # header, podium, footer
+            if i < self.RICH_TOP:
+                r = row(i, uid, sc)
+            else:                    # folded ranks: one short line each (a table row costs ~250 chars,
+                                     # so only ~96 of 113 players fitted); no profile link
+                r = (f"<li>{i + 1}. {html.escape(nm(uid, sc), quote=False)} — <b>{pts(sc)}</b>/{total} · "
+                     f"{round(100 * sc['correct'] / total)}% · {mm(sc.get('time', 0))}</li>")
+            cost = len(premiumize_html(r)) if prem else len(r)   # emoji in names grow into <tg-emoji> tags
+            if size + cost > self.RICH_MAX_CHARS - 4000:          # header, podium, footer
                 break
-            rows.append(r); size += len(r)
+            rows.append(r); size += cost
         out = [f"<h2>🏆 Final result</h2><p><b>{html.escape(s.title)}</b></p>"]
         if stopped:
             out.append(f"<p><i>Stopped after {s.idx} of {len(s.questions)} questions.</i></p>")
@@ -820,7 +838,7 @@ class GroupQuizMixin:
                    + "".join(rows[:self.RICH_TOP]) + "</table>")
         if len(rows) > self.RICH_TOP:
             out.append(f"<details><summary>📋 Ranks {self.RICH_TOP + 1}–{len(rows)} ({len(rows) - self.RICH_TOP} more)</summary>"
-                       "<table bordered striped compact>" + head_row + "".join(rows[self.RICH_TOP:]) + "</table></details>")
+                       "<ul>" + "".join(rows[self.RICH_TOP:]) + "</ul></details>")
         if len(rank) > len(rows):
             out.append(f"<p><i>+{len(rank) - len(rows)} more players. Full list: 🌐 Download HTML Report.</i></p>")
         foot = f"👥 Players {len(rank)} · ❓ Questions {total}" + (f" · ⚖️ Negative −{s.negative_rate:g}" if neg else "")
