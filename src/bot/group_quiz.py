@@ -79,6 +79,7 @@ class Session:
     part_start: int = -1                    # first question index of this part (-1 = not a part)
     pinned:    bool = False                 # lobby/control message pinned by the bot
     lobby_page: str = "main"                # main | settings (not saved)
+    in_pause_wait: bool = False             # loop is waiting for Resume (not saved)
 
     def to_doc(self) -> Dict:
         return {
@@ -571,10 +572,13 @@ class GroupQuizMixin:
             while s.idx < n and s.status in ("running", "paused"):
                 if s.status == "paused":
                     s.wake.clear()
+                    s.in_pause_wait = True
                     try:
                         await asyncio.wait_for(s.wake.wait(), timeout=max(1.0, IDLE_PAUSE - (time.monotonic() - s.paused_at)))
                     except asyncio.TimeoutError:
                         s.status = "stopped"
+                    finally:
+                        s.in_pause_wait = False
                     continue
                 q, num = s.questions[s.idx], s.idx + 1
                 s.idx += 1
@@ -611,7 +615,8 @@ class GroupQuizMixin:
                 else:
                     s.unanswered_streak = 0
                 if num % LB_EVERY == 0 and num < n:
-                    await self._gq_send(context, s, f"📊 <b>After {num} questions</b>\n{self._gq_board(s, 5)}")
+                    await self._gq_send(context, s, f"📊 <b>After {num} questions</b>\n{self._gq_board(s, 5)}",
+                                        _kb(s))
                 await asyncio.sleep(GAP)
             await self._gq_finish(context, s)
         except Exception as e:
@@ -645,7 +650,7 @@ class GroupQuizMixin:
                   correct_option_id=correct, is_anonymous=False, open_period=s.secs)
         exp = str(q.get("explanation") or "").strip()
         if exp:
-            kw["explanation"] = exp[:200]
+            kw["explanation"] = _short(exp, 200)        # Telegram shows max 200 chars
         msg = None
         for _attempt in range(3):
             call_kw = dict(kw)
@@ -1398,7 +1403,8 @@ class GroupQuizMixin:
             await self._gq_edit_ctrl(context, s, "⏸ <b>Paused.</b>")
         elif action == "resume" and s.status == "paused":
             s.status = "running"
-            s.wake.set()
+            if s.in_pause_wait:
+                s.wake.set()
             await query.answer("Resumed ▶️")
             await self._gq_edit_ctrl(context, s, "▶️ <b>Running.</b>")
         elif action == "skip" and s.status == "running":
@@ -1428,6 +1434,45 @@ class GroupQuizMixin:
             return
         s.status = "stopped"
         s.wake.set()
+
+    async def cmd_pausequiz(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/pause in a group: hold the quiz after the current question (host or admins)."""
+        await self._gq_pause_resume(update, context, pause=True)
+
+    async def cmd_resumequiz(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/resume in a group: continue a paused quiz (host or admins)."""
+        await self._gq_pause_resume(update, context, pause=False)
+
+    async def _gq_pause_resume(self, update, context, pause: bool) -> None:
+        user, chat, msg = update.effective_user, update.effective_chat, update.effective_message
+        if not user or not chat:
+            return
+        s = ACTIVE.get(chat.id)
+        if not s or s.status not in ("running", "paused"):
+            await self._reply(update, "ℹ️ <b>No quiz is running here.</b>")
+            return
+        if user.id != s.started_by and not await self._gq_is_admin(context, chat.id, user, msg):
+            await self._reply(update, "⛔ <b>Only the quiz host or group admins can do this.</b>")
+            return
+        if pause:
+            if s.status == "paused":
+                await self._reply(update, "⏸ <b>Already paused.</b> Send /resume to continue.", reply_markup=_kb(s))
+                return
+            s.status, s.paused_at = "paused", time.monotonic()
+            await self._gq_edit_ctrl(context, s, "⏸ <b>Paused.</b>")
+            await self._reply(update, f"⏸ <b>Quiz paused after Q{s.idx}.</b>\n"
+                                      "<i>The current question still finishes. Send /resume or tap ▶️ Resume.</i>",
+                              reply_markup=_kb(s))
+        else:
+            if s.status == "running":
+                await self._reply(update, "▶️ <b>The quiz is already running.</b>", reply_markup=_kb(s))
+                return
+            s.status = "running"
+            if s.in_pause_wait:
+                s.wake.set()
+            await self._gq_edit_ctrl(context, s, "▶️ <b>Running.</b>")
+            await self._reply(update, f"▶️ <b>Resumed!</b> Next: Q{s.idx + 1}.", reply_markup=_kb(s))
+        await self._gq_save(s)
 
     async def cmd_schedule(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/schedule <HH:MM> [quiz_id] or /schedule in <N>m [quiz_id] in a group."""

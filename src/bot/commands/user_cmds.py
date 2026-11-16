@@ -153,6 +153,7 @@ class UserCommandsMixin(object):
             "• /startquiz — Live 'I'm Ready!' Lobby + Top-3 Winner Certificates\n"
             "• /schedule <code>15m</code> — Schedule group tournament\n"
             "• /slow · /normal · /fast — Adjust question speed\n"
+            "• /pause · /resume — Hold the quiz and continue later\n"
             "• /stopquiz — End active group quiz &amp; show podium</b></blockquote>\n"
             "<blockquote><b>4️⃣ ANALYTICS, REVIEW &amp; RANKING\n"
             "• /result — Personal wrong-answer review sheet in DM\n"

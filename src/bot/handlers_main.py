@@ -407,6 +407,8 @@ class TelegramQuizBot(
         app.add_handler(CommandHandler("myquiz",      self.cmd_myquiz))
         app.add_handler(CommandHandler("startquiz",   self.cmd_startquiz))
         app.add_handler(CommandHandler("stopquiz",    self.cmd_stopquiz))
+        app.add_handler(CommandHandler(["pause", "pausequiz"],   self.cmd_pausequiz))
+        app.add_handler(CommandHandler(["resume", "resumequiz"], self.cmd_resumequiz))
         app.add_handler(CommandHandler("slow",        self.cmd_slow))
         app.add_handler(CommandHandler("fast",        self.cmd_fast))
         app.add_handler(CommandHandler("normal",      self.cmd_normal))
@@ -523,6 +525,8 @@ class TelegramQuizBot(
             BotCommand("battle",       "⚔️ 1v1 Live Quiz Battle"),
             BotCommand("quiz",         "▶️ Instant Practice Question"),
             BotCommand("startquiz",    "👥 Start Group Tournament"),
+            BotCommand("pause",        "⏸ Pause Group Quiz"),
+            BotCommand("resume",       "▶️ Resume Group Quiz"),
             BotCommand("stopquiz",     "⏹ Stop Group Tournament"),
             BotCommand("schedule",     "⏰ Schedule Group Quiz"),
             BotCommand("result",       "📩 Wrong-Answer Review in DM"),

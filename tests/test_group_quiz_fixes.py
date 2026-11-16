@@ -112,3 +112,40 @@ async def test_plain_start_in_group_admin_gets_picker_member_does_not():
     except Exception:
         pass                                                     # welcome card needs more mocks
     b.cmd_startquiz.assert_not_awaited()
+
+
+async def test_pause_resume_commands_and_quick_resume_does_not_skip():
+    from tests.test_group_quiz import group_upd
+    app = App()
+    c, polls, sent = ctx(admins=(1,))
+    await press(app, c, user(1), "gq|bot|1|10")
+    s = gq.ACTIVE[GROUP]
+    s.secs = 0.3
+    for _ in range(200):
+        if polls:
+            break
+        await __import__("asyncio").sleep(0.005)
+    await app.cmd_pausequiz(group_upd(user(5)), c)                 # member: no
+    assert "Only the quiz host" in app.replies[-1][0] and s.status == "running"
+    await app.cmd_pausequiz(group_upd(user(1)), c)
+    assert s.status == "paused" and "paused" in app.replies[-1][0]
+    await app.cmd_resumequiz(group_upd(user(1)), c)                # quick resume while Q1 is open
+    assert s.status == "running" and not s.wake.is_set()            # Q1 not cut short
+    await app.cmd_pausequiz(group_upd(user(1)), c)
+    await __import__("asyncio").sleep(0.6)                         # loop now waits in pause
+    n = len(polls)
+    assert s.in_pause_wait
+    await __import__("asyncio").sleep(0.4)
+    assert len(polls) == n                                          # nothing sent while paused
+    await app.cmd_resumequiz(group_upd(user(1)), c)
+    await __import__("asyncio").sleep(0.2)
+    assert len(polls) == n + 1                                      # continues
+    s.status = "stopped"; s.wake.set()
+    await wait_done()
+    await app.cmd_resumequiz(group_upd(user(1)), c)
+    assert "No quiz is running" in app.replies[-1][0]
+
+
+def test_explanation_cut_on_word():
+    t = _short("ICC ka headquarter Dubai mein hai aur iske 108 members " * 6, 200)
+    assert len(t) <= 200 and t.endswith("…") and t[-2] != " "
