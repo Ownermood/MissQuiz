@@ -598,3 +598,29 @@ async def test_anonymous_admin_menu_usable_by_real_admin_not_by_members():
 def test_menu_owner_is_the_user_for_normal_messages():
     upd = group_upd(user(9, "A"))
     assert gq.GroupQuizMixin._gq_menu_owner(upd) == 9
+
+
+async def test_part_plays_in_order_so_next_part_is_exact():
+    """Stopped after 4 of Q201–Q400 → those 4 must be Q201–Q204 (Next part · from Q205 is then right).
+    Play again on a part replays it in the same order; a normal (non-part) quiz still shuffles."""
+    app = App()
+    c, polls, sent = ctx(admins=(1,))
+    allq = questions(60)
+    sid = app.real.create_quiz_set(1, "Bank", allq, 20)
+    admin = user(1, "Admin")
+    await press(app, c, admin, f"gq|part|1|{sid}|25|25")
+    s = gq.ACTIVE[GROUP]
+    assert [q["question"] for q in s.questions] == [q["question"] for q in allq[25:50]]
+    s.status = "stopped"; s.wake.set()
+    await wait_done()
+    await press(app, c, admin, f"gq|again|{GROUP}")
+    s2 = gq.ACTIVE[GROUP]
+    assert [q["question"] for q in s2.questions] == [q["question"] for q in allq[25:50]]
+    s2.status = "stopped"; s2.wake.set()
+    await wait_done()
+    import random as _r
+    _r.seed(1)
+    qs = questions(30)
+    await app._gq_begin(c, GROUP, None, admin, "Mix", qs, 20, "")
+    assert [q["question"] for q in gq.ACTIVE[GROUP].questions] != [q["question"] for q in questions(30)]
+    gq.ACTIVE.pop(GROUP, None)

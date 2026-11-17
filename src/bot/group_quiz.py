@@ -446,7 +446,7 @@ class GroupQuizMixin:
     async def _gq_begin(self, context, chat_id: int, thread_id, user, title: str,
                         questions: List[Dict], secs: int, set_id: str = "",
                         negative_rate: float = 0.0, skip_lobby: Optional[bool] = None,
-                        part_start: int = -1) -> Optional[Session]:
+                        part_start: int = -1, shuffle: bool = True) -> Optional[Session]:
         if is_active(chat_id):
             return None
         if skip_lobby is None:
@@ -455,7 +455,8 @@ class GroupQuizMixin:
             res_tid = await self._gq_db("get_group_open_thread", chat_id, thread_id, default=thread_id)
             if isinstance(res_tid, int) or res_tid is None:
                 thread_id = res_tid
-        random.shuffle(questions)
+        if part_start < 0 and shuffle:
+            random.shuffle(questions)                    # a part (Q201–Q400) plays IN ORDER: progress = part_start + asked
         chat_title = ""
         try:
             ch = await context.bot.get_chat(chat_id)
@@ -1354,7 +1355,8 @@ class GroupQuizMixin:
                 return
             await query.answer("Starting again! 🚀")
             await self._gq_begin(context, chat_id, last.thread_id, user, last.title,
-                                 list(last.questions), last.secs, last.set_id)
+                                 list(last.questions), last.secs, last.set_id,
+                                 shuffle=getattr(last, "part_start", -1) < 0)   # a part replays in order
             return
 
         s = ACTIVE.get(chat_id)
