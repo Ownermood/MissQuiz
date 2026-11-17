@@ -167,6 +167,13 @@ if _wifu_raw:
     except ValueError:
         pass
 
+# Private Telegram group/channel where the bot posts its errors (bot must be a member). Unset = off.
+LOG_CHAT_ID: Optional[int] = None
+try:
+    LOG_CHAT_ID = int(os.environ.get("LOG_CHAT_ID", "") or 0) or None
+except ValueError:
+    pass
+
 AUTHORIZED_USERS: List[int] = [OWNER_ID] if OWNER_ID else []
 if WIFU_ID:
     AUTHORIZED_USERS.append(WIFU_ID)

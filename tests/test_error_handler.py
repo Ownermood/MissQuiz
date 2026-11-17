@@ -37,3 +37,40 @@ async def test_command_error_still_replies():
     u, msg = _upd(False)
     await TelegramQuizBot._global_error_handler(None, u, SimpleNamespace(error=RuntimeError("boom")))
     msg.reply_text.assert_awaited()
+
+
+def _boom():
+    try:
+        raise RuntimeError("db at mongodb://user:supersecret@host failed")
+    except RuntimeError as e:
+        return e
+
+
+async def test_error_posted_to_log_chat_scrubbed_and_rate_limited(monkeypatch):
+    from src.bot import error_log
+    from src.core import config
+    monkeypatch.setattr(config, "LOG_CHAT_ID", -100123)
+    monkeypatch.setenv("MONGODB_URL", "mongodb://user:supersecret@host")
+    error_log._last_sent.clear()
+    bot = SimpleNamespace(send_message=AsyncMock())
+    u = SimpleNamespace(effective_chat=SimpleNamespace(type="supergroup", id=-1005, title="QV"),
+                        effective_user=SimpleNamespace(id=42),
+                        callback_query=SimpleNamespace(data="gq|launch|-1005"), effective_message=None)
+    err = _boom()
+    assert await error_log.post_error(bot, u, err) is True
+    chat, text = bot.send_message.await_args.args
+    assert chat == -100123 and "supersecret" not in text and "&lt;MONGODB_URL&gt;" in text
+    assert "gq|launch|-1005" in text and "RuntimeError" in text and len(text) < 4096
+    assert await error_log.post_error(bot, u, err) is False            # same error again → skipped
+    assert bot.send_message.await_count == 1
+
+
+async def test_no_log_chat_or_send_failure_never_raises(monkeypatch):
+    from src.bot import error_log
+    from src.core import config
+    error_log._last_sent.clear()
+    monkeypatch.setattr(config, "LOG_CHAT_ID", None)
+    bot = SimpleNamespace(send_message=AsyncMock(side_effect=RuntimeError("chat not found")))
+    assert await error_log.post_error(bot, None, _boom()) is False
+    monkeypatch.setattr(config, "LOG_CHAT_ID", -100123)
+    assert await error_log.post_error(bot, None, _boom()) is False

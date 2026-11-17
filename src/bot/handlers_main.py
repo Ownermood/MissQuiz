@@ -32,6 +32,7 @@ from src.bot.battle import BattleMixin
 from src.bot.admin_panel import AdminPanelMixin
 from src.bot.my_quiz import MyQuizMixin
 from src.bot.group_quiz import GroupQuizMixin
+from src.bot.error_log import post_error
 
 logger = logging.getLogger(__name__)
 
@@ -683,6 +684,7 @@ class TelegramQuizBot(
             f"{err}",
             exc_info=err,
         )
+        await post_error(getattr(context, "bot", None), update, err)   # → LOG_CHAT_ID group (if set)
         if not isinstance(update, Update):
             return
         try:
