@@ -38,3 +38,22 @@ async def test_admin_status_note(old, new, expect):
         assert expect in ctx.bot.send_message.call_args.args[1]
     else:
         ctx.bot.send_message.assert_not_awaited()
+
+
+async def test_startup_recovery_remembers_left_groups():
+    """A group the bot left is checked once; the next restart doesn't call Telegram for it again."""
+    from telegram.error import Forbidden
+    from src.bot.tracking import RECOVERY_GONE_KEY
+    store = {}
+    b = Bot()
+    b.db.get_known_group_ids_from_history.return_value = {-1, -2}
+    b.db.get_registered_group_ids.return_value = set()
+    b.db.get_setting.side_effect = lambda k, d=None: store.get(k, d)
+    b.db.set_setting.side_effect = lambda k, v: store.__setitem__(k, v)
+    get_chat = AsyncMock(side_effect=Forbidden("bot was kicked"))
+    b.application = SimpleNamespace(bot=SimpleNamespace(get_chat=get_chat))
+    await b.recover_groups_from_history()
+    assert get_chat.await_count == 2 and store[RECOVERY_GONE_KEY] == [-2, -1]
+    get_chat.reset_mock()
+    await b.recover_groups_from_history()                 # next restart
+    get_chat.assert_not_awaited()

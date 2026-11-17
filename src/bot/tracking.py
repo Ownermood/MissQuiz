@@ -13,6 +13,7 @@ from telegram.ext import ContextTypes
 from src.bot.ui import UI, get_thread_id
 
 logger = logging.getLogger(__name__)
+RECOVERY_GONE_KEY = "recovery_gone_group_ids"   # settings: groups the bot left (startup recovery skips them)
 
 
 class TrackingMixin(object):
@@ -297,7 +298,8 @@ class TrackingMixin(object):
         try:
             known_ids   = self.db.get_known_group_ids_from_history()
             registered  = self.db.get_registered_group_ids()
-            missing_ids = known_ids - registered
+            gone_ids    = set(self.db.get_setting(RECOVERY_GONE_KEY, []) or []) if hasattr(self.db, "get_setting") else set()
+            missing_ids = known_ids - registered - gone_ids   # groups the bot already left: don't ask again
 
             if not missing_ids:
                 logger.info("[STARTUP RECOVERY] No unregistered groups found in history")
@@ -327,16 +329,21 @@ class TrackingMixin(object):
                         skipped += 1
                 except Forbidden:
                     logger.info(
-                        f"[GROUP SKIP] id={chat_id} — bot no longer a member"
+                        f"[GROUP SKIP] id={chat_id} — bot no longer a member (won't check again)"
                     )
+                    gone_ids.add(chat_id)
                     skipped += 1
                 except BadRequest as e:
                     logger.warning(f"[GROUP SKIP] id={chat_id} — {e}")
+                    if "not found" in str(e).lower():
+                        gone_ids.add(chat_id)
                     skipped += 1
                 except Exception as e:
                     logger.error(f"[GROUP RECOVER FAIL] id={chat_id}: {e}")
                     failed += 1
 
+            if hasattr(self.db, "set_setting"):
+                self.db.set_setting(RECOVERY_GONE_KEY, sorted(gone_ids & known_ids))   # old history purged → list shrinks
             logger.info(
                 f"[STARTUP RECOVERY] Done — recovered={recovered} "
                 f"skipped={skipped} failed={failed}"
