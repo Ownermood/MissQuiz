@@ -672,14 +672,23 @@ class TelegramQuizBot(
 
     async def _global_error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE):
         """Catch-all PTB error handler — logs every unhandled exception."""
+        err = context.error
+        low = str(err).lower()
+        if isinstance(err, BadRequest) and ("query is too old" in low or "query id is invalid" in low
+                                            or "message is not modified" in low):
+            logger.warning(f"[PTB] harmless {type(update).__name__} error: {err}")
+            return                                         # late button press under load: nothing to tell the chat
         logger.error(
             f"[PTB] Unhandled exception for update {type(update).__name__}: "
-            f"{context.error}",
-            exc_info=context.error,
+            f"{err}",
+            exc_info=err,
         )
         if not isinstance(update, Update):
             return
         try:
+            if update.callback_query:                      # button press: popup only, never a message in a big group
+                await update.callback_query.answer("⚠️ Something went wrong. Please try again.", show_alert=True)
+                return
             if update.effective_message:
                 await update.effective_message.reply_text(
                     "⚠️ Something went wrong. Please try again in a moment."
