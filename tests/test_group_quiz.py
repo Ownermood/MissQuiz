@@ -624,3 +624,31 @@ async def test_part_plays_in_order_so_next_part_is_exact():
     await app._gq_begin(c, GROUP, None, admin, "Mix", qs, 20, "")
     assert [q["question"] for q in gq.ACTIVE[GROUP].questions] != [q["question"] for q in questions(30)]
     gq.ACTIVE.pop(GROUP, None)
+
+
+async def test_pause_on_leaderboard_flips_that_message_to_resume():
+    """Pause tapped on a leaderboard/reply message (not the pinned card) must turn THAT message's
+    button into ▶️ Resume; an old Pause button pressed while paused just fixes itself."""
+    app = App()
+    c, polls, sent = ctx(admins=(1,))
+    c.bot.edit_message_reply_markup = AsyncMock()
+    admin = user(1, "Admin")
+    s = await app._gq_begin(c, GROUP, None, admin, "T", questions(10), 20, "")
+    s.secs = 30
+    s.board_msg_id = 555                                  # leaderboard with controls
+    q = await press(app, c, admin, f"gq|pause|{GROUP}")
+    q.message.message_id = 777
+    assert s.status == "paused"
+    edited = {call.args[1]: call.kwargs["reply_markup"] for call in c.bot.edit_message_reply_markup.await_args_list}
+    assert 555 in edited and edited[555].inline_keyboard[0][0].text.endswith("Resume")
+    c.bot.edit_message_reply_markup.reset_mock()
+    q = await press(app, c, admin, f"gq|pause|{GROUP}")    # stale Pause somewhere else
+    assert "Already paused" in q.answer.await_args.args[0] and s.status == "paused"
+    assert c.bot.edit_message_reply_markup.await_count >= 1
+    await press(app, c, admin, f"gq|resume|{GROUP}")
+    assert s.status == "running"
+    kb = c.bot.edit_message_reply_markup.await_args.kwargs["reply_markup"]
+    assert kb.inline_keyboard[0][0].text.endswith("Pause")
+    s.status = "stopped"; s.wake.set()
+    await wait_done()
+    assert GROUP not in gq.KB_MSGS

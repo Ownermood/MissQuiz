@@ -55,6 +55,24 @@ IDLE_PAUSE  = 30 * 60    # a paused session is closed after 30 min
 SLACK       = 1          # extra second after the poll timer before moving on
 
 ACTIVE: Dict[int, "Session"] = {}       # chat_id → running/paused session (scheduler reads this)
+KB_MSGS: Dict[int, List[int]] = {}      # chat_id → recent messages with Pause/Resume buttons (kept in sync)
+KB_KEEP = 8
+
+
+def _remember_kb(chat_id: int, msg) -> None:
+    mid = getattr(msg, "message_id", None)
+    if isinstance(mid, int):
+        lst = KB_MSGS.setdefault(chat_id, [])
+        if mid not in lst:
+            lst.append(mid)
+        del lst[:-KB_KEEP]
+
+
+def _is_ctrl_kb(kb) -> bool:
+    try:
+        return str(kb.inline_keyboard[0][0].callback_data or "").startswith(("gq|pause|", "gq|resume|"))
+    except Exception:
+        return False
 
 
 def is_active(chat_id: int) -> bool:
@@ -340,7 +358,10 @@ class GroupQuizMixin:
             if s.thread_id:
                 call_kw["message_thread_id"] = s.thread_id
             try:
-                return await context.bot.send_message(s.chat_id, text, **call_kw)
+                sent = await context.bot.send_message(s.chat_id, text, **call_kw)
+                if _is_ctrl_kb(kb):
+                    _remember_kb(s.chat_id, sent)
+                return sent
             except Exception as e:
                 err = str(e).lower()
                 if s.thread_id and any(w in err for w in ("topic", "thread", "closed")):
@@ -363,6 +384,24 @@ class GroupQuizMixin:
         except Exception as e:
             if "not modified" not in str(e).lower():
                 logger.debug(f"[GQUIZ] ctrl edit failed: {e}")
+
+    async def _gq_sync_kb(self, context, s: Session, extra_mid: Optional[int] = None) -> None:
+        """Pause ⇄ Resume on EVERY message that carries the controls (leaderboard, /pause reply,
+        the one just tapped) — not only the pinned card, which may be far up the chat."""
+        mids = list(KB_MSGS.get(s.chat_id, []))
+        for m in (s.board_msg_id, extra_mid):
+            if isinstance(m, int) and m not in mids:
+                mids.append(m)
+        kb = _kb(s) if s.status in ("running", "paused") else None
+        for mid in mids:
+            if mid == s.ctrl_msg_id:
+                continue                                   # _gq_edit_ctrl handles it (text changes too)
+            try:
+                await context.bot.edit_message_reply_markup(s.chat_id, mid, reply_markup=kb)
+            except Exception as e:
+                low = str(e).lower()
+                if "not modified" not in low and s.chat_id in KB_MSGS and mid in KB_MSGS[s.chat_id]:
+                    KB_MSGS[s.chat_id].remove(mid)         # deleted / too old: forget it
 
     # ── start ────────────────────────────────────────────────────────────
 
@@ -639,6 +678,7 @@ class GroupQuizMixin:
                         s.paused_at = time.monotonic()
                         s.unanswered_streak = 0
                         await self._gq_edit_ctrl(context, s, "⏸ <b>Auto-Paused (no answers for 3 questions).</b>")
+                        await self._gq_sync_kb(context, s)
                         await self._gq_send(
                             context, s,
                             "⏸ <b>Quiz Auto-Paused</b> because 3 questions went unanswered.\n"
@@ -865,6 +905,7 @@ class GroupQuizMixin:
     async def _gq_finish(self, context, s: Session) -> None:
         if ACTIVE.get(s.chat_id) is s:
             ACTIVE.pop(s.chat_id, None)
+        KB_MSGS.pop(s.chat_id, None)
         await self._gq_drop_board(context, s)
         await self._gq_unpin(context, s)
         asked = min(s.idx, len(s.questions))
@@ -1471,16 +1512,23 @@ class GroupQuizMixin:
                 except Exception:
                     pass
                 return
+        tapped = getattr(query.message, "message_id", None)
         if action == "pause" and s.status == "running":
             s.status, s.paused_at = "paused", time.monotonic()
             await query.answer("Paused ⏸ — the current question still finishes.")
             await self._gq_edit_ctrl(context, s, "⏸ <b>Paused.</b>")
+            await self._gq_sync_kb(context, s, tapped)
         elif action == "resume" and s.status == "paused":
             s.status = "running"
             if s.in_pause_wait:
                 s.wake.set()
             await query.answer("Resumed ▶️")
             await self._gq_edit_ctrl(context, s, "▶️ <b>Running.</b>")
+            await self._gq_sync_kb(context, s, tapped)
+        elif action in ("pause", "resume"):                # old button (state already changed): just fix it
+            await query.answer("Already paused ⏸ — tap ▶️ Resume." if s.status == "paused"
+                               else "Already running ▶️")
+            await self._gq_sync_kb(context, s, tapped)
         elif action == "skip" and s.status == "running":
             s.wake.set()
             await query.answer("Skipping ⏭")
@@ -1542,9 +1590,10 @@ class GroupQuizMixin:
                 return
             s.status, s.paused_at = "paused", time.monotonic()
             await self._gq_edit_ctrl(context, s, "⏸ <b>Paused.</b>")
-            await self._reply(update, f"⏸ <b>Quiz paused after Q{s.idx}.</b>\n"
+            await self._gq_sync_kb(context, s)
+            _remember_kb(chat.id, await self._reply(update, f"⏸ <b>Quiz paused after Q{s.idx}.</b>\n"
                                       "<i>The current question still finishes. Send /resume or tap ▶️ Resume.</i>",
-                              reply_markup=_kb(s))
+                              reply_markup=_kb(s)))
         else:
             if s.status == "running":
                 await self._reply(update, "▶️ <b>The quiz is already running.</b>", reply_markup=_kb(s))
@@ -1553,7 +1602,8 @@ class GroupQuizMixin:
             if s.in_pause_wait:
                 s.wake.set()
             await self._gq_edit_ctrl(context, s, "▶️ <b>Running.</b>")
-            await self._reply(update, f"▶️ <b>Resumed!</b> Next: Q{s.idx + 1}.", reply_markup=_kb(s))
+            await self._gq_sync_kb(context, s)
+            _remember_kb(chat.id, await self._reply(update, f"▶️ <b>Resumed!</b> Next: Q{s.idx + 1}.", reply_markup=_kb(s)))
         await self._gq_save(s)
 
     async def cmd_schedule(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
