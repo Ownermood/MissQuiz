@@ -74,3 +74,26 @@ async def test_no_log_chat_or_send_failure_never_raises(monkeypatch):
     assert await error_log.post_error(bot, None, _boom()) is False
     monkeypatch.setattr(config, "LOG_CHAT_ID", -100123)
     assert await error_log.post_error(bot, None, _boom()) is False
+
+
+async def test_admin_check_skips_group_queue_but_sends_dont():
+    """getChatMember must not wait behind the group's 20 msg/min queue; sendMessage still does."""
+    from src.bot.premium import make_rate_limiter
+    lim = make_rate_limiter()
+    seen = []
+
+    async def fake_run(self_, chat, group, allow_paid_broadcast, callback, args, kwargs):
+        seen.append(group)
+        return await callback(*args, **kwargs)
+
+    import telegram.ext._aioratelimiter as m
+    orig = m.AIORateLimiter._run_request
+    m.AIORateLimiter._run_request = fake_run
+    try:
+        cb = AsyncMock(return_value={"ok": True})
+        await lim.process_request(cb, ("getChatMember", {"chat_id": -100}), {}, "getChatMember", {"chat_id": -100}, None)
+        await lim.process_request(cb, ("sendMessage", {"chat_id": -100}), {}, "sendMessage", {"chat_id": -100}, None)
+    finally:
+        m.AIORateLimiter._run_request = orig
+    assert seen == [False, -100]
+    assert cb.await_args_list[0].args == ("getChatMember", {"chat_id": -100})   # request itself unchanged

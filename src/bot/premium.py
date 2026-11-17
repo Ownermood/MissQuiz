@@ -480,4 +480,17 @@ def make_rate_limiter():
     """Keeps every send under Telegram's limits (~30 msg/s overall, 20/min per
     group) and automatically waits + retries on 429 'Flood control'."""
     from telegram.ext import AIORateLimiter
-    return AIORateLimiter(max_retries=3)
+
+    class _Limiter(AIORateLimiter):
+        async def process_request(self, callback, args, kwargs, endpoint, data, rate_limit_args):
+            # Read-only lookups (admin check etc.) post nothing in the group, so they must not
+            # wait in its 20/min queue behind quiz polls: only the global limit applies.
+            # (Waiting there made button presses time out → "Query is too old".)
+            if endpoint in READ_ONLY_ENDPOINTS:
+                data = {}
+            return await super().process_request(callback, args, kwargs, endpoint, data, rate_limit_args)
+
+    return _Limiter(max_retries=3)
+
+
+READ_ONLY_ENDPOINTS = frozenset({"getChatMember", "getChatAdministrators", "getChat", "getChatMemberCount"})
